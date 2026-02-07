@@ -23,9 +23,9 @@ WORKFLOW_PATH = os.path.join(HOME, ".agent/workflows/hei_jaavis.md")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Homebrew Compatibility: If installed via brew, resources are in ../share/jaavis
-if not os.path.exists(os.path.join(BASE_DIR, "library")) and not os.path.exists(os.path.join(BASE_DIR, "logo.md")):
+if not os.path.exists(os.path.join(BASE_DIR, "logo.md")) and not os.path.exists(os.path.join(BASE_DIR, "jaavis_tui.py")):
     brew_share = os.path.join(BASE_DIR, "..", "share", "jaavis")
-    if os.path.exists(os.path.join(brew_share, "library")):
+    if os.path.exists(os.path.join(brew_share, "logo.md")):
         BASE_DIR = brew_share
 
 # Add BASE_DIR to path for modular imports (jaavis_tui)
@@ -1939,7 +1939,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 
 # ==========================================
 # MAINTAINER
