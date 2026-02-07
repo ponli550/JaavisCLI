@@ -1136,6 +1136,15 @@ def init_project():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
+def check_k8s_connection():
+    """Checks if kubectl can connect to a running cluster"""
+    try:
+        # Silently check if the cluster is reachable (timeout to avoid hanging)
+        subprocess.check_output(["kubectl", "cluster-info"], stderr=subprocess.STDOUT, timeout=5)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
 def check_system(full_scan=True):
     """Performs system health checks. Returns a dict of results."""
     results = {
@@ -1373,8 +1382,11 @@ def deploy_project():
                  issues.append("Docker not installed")
 
             # Grade A requires Kubectl
-            if grade == "A" and not shutil.which("kubectl"):
-                 issues.append("Kubectl not installed")
+            if grade == "A":
+                if not shutil.which("kubectl"):
+                     issues.append("Kubectl not installed")
+                elif not check_k8s_connection():
+                     issues.append("Kubernetes Cluster Unreachable (Check Docker Desktop / Minikube)")
 
             # Common Checks
             if not health["tools"]["npm"]: issues.append("NPM not installed")
@@ -1934,35 +1946,50 @@ def sync_skills():
         config["auto_sync"]["updates_pending"] = False
         save_config(config)
 
-def push_skills():
-    """CLI Command: Push local library changes to remote."""
+def push_library():
+    """CLI Command: Push local library changes to remote (Auto-Init & Smart Sync)."""
     lib_path = get_active_library_path()
     persona = get_current_persona_name()
 
     print(f"\n{MAGENTA}⬆️  Pushing Skills for {persona}{RESET}")
     print(f"{GREY}Path: {lib_path}{RESET}")
 
-    # 1. Check if git repository
+    # 1. Auto-Initialize Git
     if not os.path.exists(os.path.join(lib_path, ".git")):
-        print(f"{RED}Error: This library is not a git repository.{RESET}")
-        return
+        print(f"{YELLOW}⚠️  Library is not a git repository. Initializing...{RESET}")
+        try:
+            subprocess.run(["git", "init"], cwd=lib_path, check=True)
+            subprocess.run(["git", "branch", "-M", "main"], cwd=lib_path, check=True)
+            print(f"{GREEN}✔ Git initialized.{RESET}")
+        except Exception as e:
+            print(f"{RED}Failed to init git: {e}{RESET}")
+            return
 
-    # 2. Check Permissions/Remote
+    # 2. Check Remote Configuration
     try:
         remote_check = subprocess.run(["git", "remote", "-v"], cwd=lib_path, capture_output=True, text=True)
         if "origin" not in remote_check.stdout:
             print(f"{YELLOW}⚠️  No remote 'origin' configured.{RESET}")
-            url = input(f"{CYAN}? Remote Git URL: {RESET}").strip()
+            print(f"{GREY}To back up your skills, create a blank repo on GitHub/GitLab.{RESET}")
+            url = input(f"{CYAN}? Paste Remote Repository URL: {RESET}").strip()
             if url:
                 subprocess.run(["git", "remote", "add", "origin", url], cwd=lib_path, check=True)
+                print(f"{GREEN}✔ Remote 'origin' added.{RESET}")
             else:
-                print("Aborted.")
-                return
+                print("Skipping remote configuration (local only).")
     except Exception as e:
-        print(f"{RED}Git Error: {e}{RESET}")
+        print(f"{RED}Git Remote Error: {e}{RESET}")
         return
 
-    # 3. Check Status
+    # 3. Smart Sync (Pull befores Push)
+    # Only pull if we have a remote and commits exist
+    has_remote = "origin" in subprocess.run(["git", "remote"], cwd=lib_path, capture_output=True, text=True).stdout
+    if has_remote:
+        print(f"{CYAN}🔄 Syncing with remote (Pulling)...{RESET}")
+        # We allow this to fail (e.g. empty remote) without stopping
+        subprocess.run(["git", "pull", "origin", "main", "--rebase"], cwd=lib_path, capture_output=True)
+
+    # 4. Check Status & Commit
     status_output = subprocess.run(["git", "status", "--porcelain"], cwd=lib_path, capture_output=True, text=True).stdout.strip()
 
     if status_output:
@@ -1981,22 +2008,25 @@ def push_skills():
     else:
         print(f"{GREEN}✔ Working directory clean.{RESET}")
 
-    # 4. Push
-    print(f"{CYAN}Pushing to origin...{RESET}")
-    try:
-        # Try main then master
-        result = subprocess.run(["git", "push", "origin", "main"], cwd=lib_path, capture_output=True, text=True)
-        if result.returncode != 0:
-             result = subprocess.run(["git", "push", "origin", "master"], cwd=lib_path, capture_output=True, text=True)
+    # 5. Push to Remote
+    if has_remote:
+        print(f"{CYAN}⬆️  Pushing to origin...{RESET}")
+        try:
+            # Try main then master
+            result = subprocess.run(["git", "push", "origin", "main"], cwd=lib_path, capture_output=True, text=True)
+            if result.returncode != 0:
+                 result = subprocess.run(["git", "push", "origin", "master"], cwd=lib_path, capture_output=True, text=True)
 
-        if result.returncode == 0:
-            print(f"{GREEN}✔ Successfully pushed to remote!{RESET}")
-        else:
-            print(f"{RED}Push failed: {result.stderr.strip()}{RESET}")
-            print(f"{GREY}Tip: You might need to 'jaavis sync' first.{RESET}")
+            if result.returncode == 0:
+                print(f"{GREEN}✔ Successfully backed up skills to remote!{RESET}")
+            else:
+                print(f"{RED}Push failed: {result.stderr.strip()}{RESET}")
+                print(f"{GREY}Tip: Check your internet or remote permissions.{RESET}")
 
-    except Exception as e:
-        print(f"{RED}Error pushing: {e}{RESET}")
+        except Exception as e:
+            print(f"{RED}Error pushing: {e}{RESET}")
+    else:
+        print(f"{YELLOW}⚠️  Changes committed locally, but not pushed (No remote).{RESET}")
 
 
 # Global Update State
@@ -2145,7 +2175,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.0.10"
+VERSION = "1.0.11"
 
 # ==========================================
 # MAINTAINER
@@ -2266,7 +2296,7 @@ def main():
         elif args.command == "sync":
             sync_skills()
         elif args.command == "push":
-            push_skills()
+            push_library()
         elif args.command == "apply":
             apply_skill(args.name, args.dry_run)
         elif args.command == "help":
