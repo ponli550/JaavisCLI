@@ -734,13 +734,22 @@ def harvest_skill(doc_path=None):
         print(f"   Action: Open this file and paste your code snippet.")
 
         # Auto-open
-        auto_open = input(f"{CYAN}? Open in editor now? (Y/n): {RESET}")
-        if auto_open.lower() != 'n':
-             import subprocess
+        print(f"\n{CYAN}? Open in editor now?{RESET}")
+        print(f"  [1] VS Code (default)")
+        print(f"  [2] Nano (terminal)")
+        print(f"  [n] No")
+
+        choice = input(f"{CYAN}Select [1]: {RESET}").strip().lower()
+
+        import subprocess
+        if choice == '' or choice == '1':
              try:
                 subprocess.call(['code', target_path])
              except:
-                pass
+                print("VS Code not found. Trying nano...")
+                subprocess.call(['nano', target_path])
+        elif choice == '2' or choice == 'nano':
+             subprocess.call(['nano', target_path])
 
     except KeyboardInterrupt:
         print(f"\n{RED}Operation Cancelled.{RESET}")

@@ -14,8 +14,8 @@ Jaavis is a CLI tool designed to help "One-Army" developers manage their knowled
 
 1.  Clone this repository:
     ```bash
-    git clone https://github.com/YOUR_USERNAME/jaavis.git
-    cd jaavis
+    git clone https://github.com/ponli550/JaavisCLI.git
+    cd JaavisCLI
     ```
 
 2.  Run the installer:
