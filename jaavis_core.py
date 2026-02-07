@@ -1195,13 +1195,23 @@ def deploy_project():
 
         # 3. Strategy Selection
         console.print(f"\n[bold cyan]🚀 Deploying {project_name}[/bold cyan]")
-        console.print("Select Deployment Strategy:")
+
+        table = Table(title="Available Deployment Strategies", show_header=True, header_style="bold magenta")
+        table.add_column("ID", style="cyan", width=4)
+        table.add_column("Strategy", style="green")
+        table.add_column("Grade", style="yellow")
+        table.add_column("Type", style="dim")
+
         for idx, s in enumerate(strategies):
-            console.print(f"  {idx+1}. {s['name']}")
+            grade_display = s.get("grade", "-")
+            type_display = s.get("type", "Standard").title()
+            table.add_row(str(idx+1), s["name"], grade_display, type_display)
+
+        console.print(table)
 
         choice_idx = 0
         if len(strategies) > 1:
-            choice_str = Prompt.ask("Choose Strategy", default="1")
+            choice_str = Prompt.ask("Choose Strategy ID", default="1")
             try:
                 choice_idx = int(choice_str) - 1
             except:
@@ -1269,70 +1279,100 @@ def deploy_project():
                     ("Migrating DB", "npx supabase migration up")
                 ]
 
-        elif selected_strategy["type"] == "harvested":
-            # Parse the harvested skill file
+        if selected_strategy["type"] == "harvested":
+            console.print(f"[bold green]🚀 Launching Harvested Strategy: {selected_strategy['name']}[/bold green]")
+            # Use apply_skill for robust execution (handles complex scripts, TTY, etc.)
+            # We pass the full path so apply_skill can skip searching.
+            # Note: apply_skill currently expects a name, so we pass the name and ensure it finds it.
+            # Or we can just read and execute here using the NEW logic from apply_skill.
+            # Let's reuse apply_skill logic by calling it directly if possible, or replicating the robust execution.
+
+            # Replicating robust execution for the specific file:
             with open(selected_strategy["path"], 'r') as f:
                 content = f.read()
-                # Regex to extract commands from <!-- JAAVIS:EXEC --> blocks
-                pattern = r'<!--\s*JAAVIS:EXEC\s*-->\s*```bash\n(.*?)\n```'
-                matches = re.findall(pattern, content, re.DOTALL)
-                for match in matches:
-                     lines = match.strip().split('\n')
-                     for line in lines:
-                        if line.strip() and not line.strip().startswith('#'):
-                            # TEMPLATE DEFAULTING for Deploy Command
-                            # If running as a strategy, we assume we want to apply it to CURRENT dir
-                            cmd = line.strip().replace("{{target_dir}}", ".")
-                            steps.append(("Custom Step", cmd))
+
+            # Extract blocks
+            pattern = r'<!--\s*JAAVIS:EXEC\s*-->\s*```bash\n(.*?)\n```'
+            matches = re.findall(pattern, content, re.DOTALL)
+
+            if not matches:
+                console.print("[yellow]⚠️  No execution blocks found in skill file.[/yellow]")
+                return
+
+            for i, match in enumerate(matches):
+                cmd_block = match.strip()
+                if not cmd_block: continue
+
+                # Allow {{target_dir}} templating
+                cmd_block = cmd_block.replace("{{target_dir}}", ".")
+
+                console.print(f"\n[bold yellow]👉 Executing Block {i+1}/{len(matches)}...[/bold yellow]")
+
+                # Execute as script file
+                import tempfile
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as tmp:
+                    tmp.write(f"#!/bin/zsh\nset -e\n{cmd_block}")
+                    tmp_path = tmp.name
+
+                os.chmod(tmp_path, 0o755)
+
+                try:
+                    # Run with TTY support
+                    result = subprocess.run(tmp_path, shell=True, executable='/bin/zsh')
+                    if result.returncode != 0:
+                         console.print(f"[bold red]❌ Block {i+1} Failed (Exit Code {result.returncode})[/bold red]")
+                         if not Prompt.ask("Continue anyway?", choices=["y", "n"], default="n") == "y":
+                             return
+                finally:
+                    os.remove(tmp_path)
+
+            console.print("\n[bold green]✅ Deployment Complete![/bold green]")
+            return
 
         elif selected_strategy["type"] == "manual":
             cmd = Prompt.ask("[bold yellow]Enter Command to Run[/bold yellow]")
             steps = [("Manual Execution", cmd)]
 
-        # 5. Glass Box Preview
-        if not steps and selected_strategy["type"] != "manual":
+        # 5. Glass Box Preview (Standard Only)
+        if not steps and selected_strategy["type"] == "standard":
              console.print("[yellow]⚠️  No steps defined for this strategy.[/yellow]")
              return
 
-        table = Table(title="Preview", show_header=True, header_style="bold magenta")
-        table.add_column("Step", style="cyan")
-        table.add_column("Command", style="green")
+        if selected_strategy["type"] == "standard":
+            table = Table(title="Preview", show_header=True, header_style="bold magenta")
+            table.add_column("Step", style="cyan")
+            table.add_column("Command", style="green")
 
-        for title, cmd in steps:
-            table.add_row(title, cmd)
+            for title, cmd in steps:
+                table.add_row(title, cmd)
 
-        console.print(table)
+            console.print(table)
 
-        # 6. Execute / Harvest Prompt
-        action = Prompt.ask(
-            "\n[bold yellow]? Ready to execute?[/bold yellow]",
-            choices=["Yes", "No", "Harvest"],
-            default="Yes"
-        )
+            # 6. Execute / Harvest Prompt
+            action = Prompt.ask(
+                "\n[bold yellow]? Ready to execute?[/bold yellow]",
+                choices=["Yes", "No", "Harvest"],
+                default="Yes"
+            )
 
-        if action == "No":
-            console.print("[red]Aborted.[/red]")
-            return
-
-        if action == "Harvest":
-            harvest_name = Prompt.ask("[cyan]Name this strategy (e.g. 'fast-deploy')[/cyan]")
-            save_harvested_deploy(harvest_name, steps, lib_path)
-            console.print(f"[green]✔ Saved as '{harvest_name}'. Continuing execution...[/green]")
-
-        # 7. Execution Loop
-        for title, cmd in steps:
-            console.print(f"\n[bold yellow]👉 {title}[/bold yellow]...")
-            # Split command string into list for subprocess if not shell=True,
-            # but to support complex pipes/env vars, shell=True is often needed for 'deploy' scripts.
-            # We used shell=False previously with list, but for flexibility we switch to shell=True here for custom commands.
-            # Security Note: User is running this on their own machine, so shell=True is acceptable for local CLI tool.
-
-            result = subprocess.call(cmd, shell=True, executable='/bin/zsh')
-            if result != 0:
-                console.print(f"[bold red]❌ Failed at step: {title}[/bold red]")
+            if action == "No":
+                console.print("[red]Aborted.[/red]")
                 return
 
-        console.print("\n[bold green]✅ Deployment Complete![/bold green]")
+            if action == "Harvest":
+                harvest_name = Prompt.ask("[cyan]Name this strategy (e.g. 'fast-deploy')[/cyan]")
+                save_harvested_deploy(harvest_name, steps, lib_path)
+                console.print(f"[green]✔ Saved as '{harvest_name}'. Continuing execution...[/green]")
+
+            # 7. Execution Loop (Standard)
+            for title, cmd in steps:
+                console.print(f"\n[bold yellow]👉 {title}[/bold yellow]...")
+                result = subprocess.call(cmd, shell=True, executable='/bin/zsh')
+                if result != 0:
+                    console.print(f"[bold red]❌ Failed at step: {title}[/bold red]")
+                    return
+
+            console.print("\n[bold green]✅ Deployment Complete![/bold green]")
 
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
@@ -1471,66 +1511,51 @@ def apply_skill(skill_name, dry_run=False, context=None):
             console.print("[yellow]⚠️  No key '<!-- JAAVIS:EXEC -->' executable blocks found in this skill.[/yellow]")
             return
 
-        commands = []
-        for match in matches:
-            # Split by line, ignore empty or comments
-            lines = match.strip().split('\n')
-            for line in lines:
-                if line.strip() and not line.strip().startswith('#'):
-                    commands.append(line.strip())
-
-        if not commands:
-            console.print("[yellow]⚠️  Found execution block but no valid commands.[/yellow]")
-            return
-
-        # TEMPLATING: Replace placeholders
-        if context:
-            final_commands = []
-            for cmd in commands:
-                for key, val in context.items():
-                    cmd = cmd.replace(f"{{{{{key}}}}}", val)
-                final_commands.append(cmd)
-            commands = final_commands
-
-        console.print(f"[bold blue]🚀 Prepared {len(commands)} commands to execute:[/bold blue]")
+        console.print(f"[bold blue]🚀 Found {len(matches)} execution blocks.[/bold blue]")
 
         # 3. Execution Loop
-        for i, cmd in enumerate(commands, 1):
-            console.print(f"\n[bold yellow]Step {i}/{len(commands)}:[/bold yellow] [green]{cmd}[/green]")
+        for i, match in enumerate(matches, 1):
+            cmd_block = match.strip()
+
+            # TEMPLATING: Replace placeholders
+            if context:
+                for key, val in context.items():
+                    cmd_block = cmd_block.replace(f"{{{{{key}}}}}", val)
+
+            console.print(f"\n[bold yellow]Block {i}/{len(matches)}:[/bold yellow]")
+            console.print(Panel(cmd_block, title="Script Content", border_style="blue"))
 
             if dry_run:
                 console.print("[dim](Dry Run: Skipped)[/dim]")
                 continue
 
-            # Execute
-            while True:
-                # Use TTY passthrough for interactive commands (login, init, etc)
-                process = subprocess.run(cmd, shell=True, executable='/bin/zsh')
+            # Execute as a single script to preserve context (variables, if/else)
+            if Prompt.ask("Execute this block?", choices=["y", "n"], default="y") == "y":
+                # Create a temporary script file to handle complex syntax
+                import tempfile
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as tmp:
+                    tmp.write(f"#!/bin/zsh\nset -e\n{cmd_block}")
+                    tmp_path = tmp.name
 
-                if process.returncode == 0:
-                    console.print(f"  [green]✔ Success[/green]")
-                    break # Next command
-                else:
-                    console.print(f"[bold red]❌ Failed (Exit Code {process.returncode})[/bold red]")
-                    # Stderr is not captured with TTY passthrough, it's printed directly.
-                    # console.print(Panel(process.stderr, title="Stderr", border_style="red"))
+                # Make executable
+                os.chmod(tmp_path, 0o755)
 
-                    # Stop-on-Fail Protocol
-                    action = Prompt.ask(
-                        "[bold red]⚠️  Error![/bold red] What to do?",
-                        choices=["Reset", "Skip", "Abort"],
-                        default="Abort"
-                    )
+                try:
+                    # Run it
+                    process = subprocess.run(tmp_path, shell=True, executable='/bin/zsh')
 
-                    if action == "Reset": # Retry
-                        console.print("[yellow]🔄 Retrying...[/yellow]")
-                        continue
-                    elif action == "Skip": # Skip
-                        console.print("[yellow]⏭️  Skipping step...[/yellow]")
-                        break
-                    elif action == "Abort": # Abort
-                        console.print("[bold red]🛑 Aborted by user.[/bold red]")
-                        return
+                    if process.returncode == 0:
+                        console.print(f"  [green]✔ Block {i} Success[/green]")
+                    else:
+                        console.print(f"[bold red]❌ Block {i} Failed (Exit Code {process.returncode})[/bold red]")
+                        if Prompt.ask("Continue anyway?", choices=["y", "n"], default="n") == "n":
+                            break
+                finally:
+                    # Cleanup
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+            else:
+                console.print("[dim]Skipped by user.[/dim]")
 
         console.print("\n[bold green]✅ Skill Applied Successfully![/bold green]")
 
