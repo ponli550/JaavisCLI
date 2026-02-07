@@ -1481,16 +1481,39 @@ def deploy_project():
         print("Rich not installed. Run 'pip install rich'")
 
 def parse_frontmatter(content):
-    """Extracts YAML frontmatter from markdown content"""
-    import yaml
+    """Extracts YAML frontmatter from markdown content with native fallback if PyYAML is missing"""
     content = content.strip()
-    if content.startswith("---"):
-        try:
-            parts = content.split("---", 2)
-            if len(parts) >= 3:
-                return yaml.safe_load(parts[1])
-        except Exception as e:
+    if not content.startswith("---"):
+        return None
+
+    try:
+        parts = content.split("---", 2)
+        if len(parts) < 3:
             return None
+
+        yaml_content = parts[1].strip()
+
+        # Try PyYAML if available
+        try:
+            import yaml
+            return yaml.safe_load(yaml_content)
+        except ImportError:
+            # Native Fallback (Simple YAML subset: key: value)
+            meta = {}
+            for line in yaml_content.split("\n"):
+                if ":" in line:
+                    key, val = line.split(":", 1)
+                    key = key.strip()
+                    val = val.strip()
+                    # Handle basic lists [a, b] or simple strings
+                    if val.startswith("[") and val.endswith("]"):
+                        val = [i.strip().strip("'").strip('"') for i in val[1:-1].split(",")]
+                    else:
+                        val = val.strip("'").strip('"')
+                    meta[key] = val
+            return meta
+    except Exception as e:
+        return None
     return None
 
 def parse_markdown_doc(doc_path):
@@ -1939,7 +1962,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 
 # ==========================================
 # MAINTAINER
