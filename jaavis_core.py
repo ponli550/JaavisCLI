@@ -1892,11 +1892,76 @@ def sync_skills():
     except Exception as e:
         print(f"{RED}Error: {e}{RESET}")
 
+
     # Reset update flag after a successful sync attempt
     config = load_config()
     if "auto_sync" in config:
         config["auto_sync"]["updates_pending"] = False
         save_config(config)
+
+def push_skills():
+    """CLI Command: Push local library changes to remote."""
+    lib_path = get_active_library_path()
+    persona = get_current_persona_name()
+
+    print(f"\n{MAGENTA}⬆️  Pushing Skills for {persona}{RESET}")
+    print(f"{GREY}Path: {lib_path}{RESET}")
+
+    # 1. Check if git repository
+    if not os.path.exists(os.path.join(lib_path, ".git")):
+        print(f"{RED}Error: This library is not a git repository.{RESET}")
+        return
+
+    # 2. Check Permissions/Remote
+    try:
+        remote_check = subprocess.run(["git", "remote", "-v"], cwd=lib_path, capture_output=True, text=True)
+        if "origin" not in remote_check.stdout:
+            print(f"{YELLOW}⚠️  No remote 'origin' configured.{RESET}")
+            url = input(f"{CYAN}? Remote Git URL: {RESET}").strip()
+            if url:
+                subprocess.run(["git", "remote", "add", "origin", url], cwd=lib_path, check=True)
+            else:
+                print("Aborted.")
+                return
+    except Exception as e:
+        print(f"{RED}Git Error: {e}{RESET}")
+        return
+
+    # 3. Check Status
+    status_output = subprocess.run(["git", "status", "--porcelain"], cwd=lib_path, capture_output=True, text=True).stdout.strip()
+
+    if status_output:
+        print(f"\n{YELLOW}📝 Uncommitted changes detected:{RESET}")
+        print(subprocess.run(["git", "status", "-s"], cwd=lib_path, capture_output=True, text=True).stdout)
+
+        if input(f"{CYAN}? Commit and Push? (Y/n): {RESET}").strip().lower() != 'n':
+            msg = input(f"{CYAN}? Commit Message: {RESET}").strip()
+            if not msg: msg = f"Update skills ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+
+            subprocess.run(["git", "add", "."], cwd=lib_path, check=True)
+            subprocess.run(["git", "commit", "-m", msg], cwd=lib_path, check=True)
+        else:
+            print("Aborted.")
+            return
+    else:
+        print(f"{GREEN}✔ Working directory clean.{RESET}")
+
+    # 4. Push
+    print(f"{CYAN}Pushing to origin...{RESET}")
+    try:
+        # Try main then master
+        result = subprocess.run(["git", "push", "origin", "main"], cwd=lib_path, capture_output=True, text=True)
+        if result.returncode != 0:
+             result = subprocess.run(["git", "push", "origin", "master"], cwd=lib_path, capture_output=True, text=True)
+
+        if result.returncode == 0:
+            print(f"{GREEN}✔ Successfully pushed to remote!{RESET}")
+        else:
+            print(f"{RED}Push failed: {result.stderr.strip()}{RESET}")
+            print(f"{GREY}Tip: You might need to 'jaavis sync' first.{RESET}")
+
+    except Exception as e:
+        print(f"{RED}Error pushing: {e}{RESET}")
 
 
 # Global Update State
@@ -1987,6 +2052,7 @@ def print_help():
         table.add_row("doctor", "chk", "Check system health")
         table.add_row("persona", "p", "Switch Persona")
         table.add_row("sync", "", "Update Skill Library (Git Sync)")
+        table.add_row("push", "", "Upload Local Changes (Git Push)")
         table.add_row("merge", "", "Create a Blueprint (Frontend + Backend)")
         table.add_row("init", "", "Scaffold new project structure")
         table.add_row("help", "", "Show this help screen")
@@ -1997,7 +2063,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.0.7"
+VERSION = "1.0.8"
 
 # ==========================================
 # MAINTAINER
@@ -2049,6 +2115,9 @@ def main():
 
     # Sync Command
     subparsers.add_parser("sync", help="Sync skills with remote library")
+
+    # Push Command
+    subparsers.add_parser("push", help="Push skills to remote library")
 
     # Help Command
     subparsers.add_parser("help", help="Show help message")
@@ -2114,6 +2183,8 @@ def main():
             run_doctor()
         elif args.command == "sync":
             sync_skills()
+        elif args.command == "push":
+            push_skills()
         elif args.command == "apply":
             apply_skill(args.name, args.dry_run)
         elif args.command == "help":
