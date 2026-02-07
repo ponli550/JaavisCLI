@@ -2001,13 +2001,55 @@ def push_skills():
 
 # Global Update State
 SKILL_UPDATES_AVAILABLE = False
+APP_UPDATE_AVAILABLE = None # Stores latest version string if available
+
+def check_for_app_updates():
+    """Checks GitHub for the latest CLI Release Tag"""
+    global APP_UPDATE_AVAILABLE
+    config = load_config()
+
+    # Throttling (check app update once every 24h)
+    last_app_check = config.get("auto_sync", {}).get("last_app_check")
+    if last_app_check:
+        try:
+            last_check_dt = datetime.fromisoformat(last_app_check)
+            if (datetime.now() - last_check_dt).total_seconds() < 86400:
+                return
+        except:
+            pass
+
+    try:
+        import urllib.request
+        import json
+
+        url = "https://api.github.com/repos/ponli550/JaavisCLI/tags"
+        req = urllib.request.Request(url, headers={'User-Agent': 'JaavisCLI'})
+
+        with urllib.request.urlopen(req, timeout=3) as response:
+            data = json.loads(response.read().decode())
+            if data and isinstance(data, list) and len(data) > 0:
+                latest_tag = data[0].get("name", "").replace("v", "")
+
+                # Simple SemVer compare (assuming simple X.Y.Z)
+                # If latest != current, assume update (naive but effective for now)
+                if latest_tag != VERSION:
+                    APP_UPDATE_AVAILABLE = latest_tag
+    except:
+        pass
+
+    # Save Check Time
+    if "auto_sync" not in config: config["auto_sync"] = {}
+    config["auto_sync"]["last_app_check"] = datetime.now().isoformat()
+    save_config(config)
 
 def check_for_skill_updates():
     """Background check for skill library updates (throttled to 24h)."""
     global SKILL_UPDATES_AVAILABLE
     config = load_config()
-    global SKILL_UPDATES_AVAILABLE
-    config = load_config()
+
+    # Run App Update Check in parallel logic (sequential execution here for simplicity)
+    check_for_app_updates()
+
     # Check updates for CORE library (Programmer) only
     lib_path = DEFAULT_LIBRARY_PATH
 
@@ -2063,7 +2105,12 @@ def print_help():
 
         console = Console()
 
-        # Update Banner
+        # Update Banner (App)
+        if APP_UPDATE_AVAILABLE:
+            console.print(f"\n[bold green]🚀 Jaavis Update Available: v{APP_UPDATE_AVAILABLE}[/bold green]")
+            console.print(f"[dim]Run 'brew upgrade jaavis' to update from v{VERSION}[/dim]")
+
+        # Update Banner (Skills)
         if SKILL_UPDATES_AVAILABLE:
             console.print("\n[bold yellow]🌟 New skill updates available! Run 'jaavis sync' to upgrade your knowledge.[/bold yellow]")
 
@@ -2098,7 +2145,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.0.9"
+VERSION = "1.0.10"
 
 # ==========================================
 # MAINTAINER
