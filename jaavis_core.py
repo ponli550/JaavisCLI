@@ -876,9 +876,9 @@ def merge_skills():
         table.add_column("Cons", style="red")
 
         # Sort by Grade
-        for skill_id, meta in sorted(all_skills.items(), key=lambda item: item[1].get('grade', 'Z')):
-            pros = ", ".join(meta.get('pros', []))
-            cons = ", ".join(meta.get('cons', []))
+        for skill_id, meta in sorted(all_skills.items(), key=lambda item: str(item[1].get('grade', 'Z'))):
+            pros = ", ".join(meta.get('pros', [])) if isinstance(meta.get('pros'), list) else str(meta.get('pros', ''))
+            cons = ", ".join(meta.get('cons', [])) if isinstance(meta.get('cons'), list) else str(meta.get('cons', ''))
             table.add_row(
                 skill_id,
                 meta.get('name', skill_id),
@@ -1962,7 +1962,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 
 # ==========================================
 # MAINTAINER
