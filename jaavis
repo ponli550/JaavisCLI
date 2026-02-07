@@ -1,0 +1,4 @@
+#!/bin/bash
+# Jaavis Wrapper - Passing control to the Core
+# Using absolute path to ensure global symlink execution works
+/opt/homebrew/bin/python3.12 "/Users/irfanali/Desktop/IRFAN/jaavis_core.py" "$@"
