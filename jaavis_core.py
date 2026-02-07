@@ -41,6 +41,7 @@ MAGENTA = '\033[1;35m'
 BLUE = '\033[1;34m'
 WHITE = '\033[1;37m'
 RED = '\033[1;31m'
+BOLD = '\033[1m'
 RESET = '\033[0m'
 GREY = '\033[0;90m'
 
@@ -169,8 +170,6 @@ def select_persona():
     # Ensure defaults exist in config for listing
     if "personas" not in config: config["personas"] = {}
     if "programmer" not in config["personas"]: config["personas"]["programmer"] = {"path": DEFAULT_LIBRARY_PATH}
-    if "contractor" not in config["personas"]: config["personas"]["contractor"] = {"path": os.path.join(BASE_DIR, "library_contractor")}
-    if "librarian" not in config["personas"]: config["personas"]["librarian"] = {"path": os.path.join(BASE_DIR, "library_librarian")}
 
     dynamic_personas = sorted([k for k in config["personas"].keys() if k != "programmer"])
 
@@ -217,8 +216,6 @@ def select_persona():
 
     # Default personas ensure they exist in config
     if "programmer" not in config["personas"]: config["personas"]["programmer"] = {"path": DEFAULT_LIBRARY_PATH}
-    if "contractor" not in config["personas"]: config["personas"]["contractor"] = {"path": os.path.join(BASE_DIR, "library_contractor")}
-    if "librarian" not in config["personas"]: config["personas"]["librarian"] = {"path": os.path.join(BASE_DIR, "library_librarian")}
 
     # Save the selected one if not exists
     if persona_key not in config["personas"]:
@@ -774,12 +771,16 @@ def harvest_skill(doc_path=None):
         choice = input(f"{CYAN}Select [1]: {RESET}").strip().lower()
 
         import subprocess
+        import shutil
         if choice == '' or choice == '1':
-             try:
-                subprocess.call(['code', target_path])
-             except:
-                print("VS Code not found. Trying nano...")
-                subprocess.call(['nano', target_path])
+             if shutil.which('code'):
+                 subprocess.call(['code', target_path])
+             elif sys.platform == 'darwin':
+                 # Fallback to 'open' on macOS which usually opens default editor (VS Code)
+                 subprocess.call(['open', target_path])
+             else:
+                 print("VS Code not found in PATH. Trying nano...")
+                 subprocess.call(['nano', target_path])
         elif choice == '2' or choice == 'nano':
              subprocess.call(['nano', target_path])
 
