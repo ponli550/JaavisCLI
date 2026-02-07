@@ -673,11 +673,25 @@ def harvest_skill(doc_path=None):
             print(f"{RED}Aborted.{RESET}")
             return
 
-        domain = input(f"{CYAN}? Domain (e.g. ui, backend, construction): {RESET}").strip().lower()
+        # Auto-detect or ask for Deployment
+        is_deploy = False
+        if "deploy" in skill_name.lower():
+            is_deploy = True
+        else:
+            is_deploy_in = input(f"{CYAN}? Is this a Deployment Strategy? (y/N): {RESET}").strip().lower()
+            if is_deploy_in == 'y': is_deploy = True
 
-        # Default to 'misc' only if empty
-        if not domain:
-            domain = 'misc'
+        if is_deploy:
+            domain = "devops"
+            # Auto-prefix naming
+            if not skill_name.lower().startswith("deploy"):
+                skill_name = f"Deploy {skill_name}"
+            print(f"{GREEN}   → Auto-categorized as '{domain}' and prefixed as '{skill_name}'{RESET}")
+        else:
+            domain = input(f"{CYAN}? Domain (e.g. ui, backend, devops): {RESET}").strip().lower()
+            # Default to 'misc' only if empty
+            if not domain:
+                domain = 'misc'
 
         def_desc = defaults.get("description", "")
         description = input(f"{CYAN}? Description (short summary) [{def_desc}]: {RESET}").strip() or def_desc
@@ -691,7 +705,13 @@ def harvest_skill(doc_path=None):
         def_cons = defaults.get("cons", "")
         cons_input = input(f"{CYAN}? Cons (comma separated) [{def_cons}]: {RESET}").strip() or def_cons
 
-        filename = skill_name.lower().replace(" ", "-") + ".md"
+        # Sanitize filename
+        safe_name = skill_name.lower().replace(" ", "_") # deploying_react -> deploy_react
+        # Ensure deploy prefix uses underscore for filename convention
+        if is_deploy and not safe_name.startswith("deploy_"):
+            safe_name = safe_name.replace("deploy-", "deploy_").replace("deploy", "deploy_")
+
+        filename = safe_name + ".md"
         # Path adjustment: Skills live in library/skills/[domain]
         target_dir = os.path.join(lib_path, "skills", domain)
         target_path = os.path.join(target_dir, filename)
@@ -1742,11 +1762,13 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
+VERSION = "1.0.0"
+
 # ==========================================
 # MAINTAINER
 # ==========================================
 def main():
-    parser = argparse.ArgumentParser(description="Jaavis - One-Army Orchestrator", add_help=False)
+    parser = argparse.ArgumentParser(description="# Jaavis Core - The One-Army Orchestrator\n# Version: 1.0.0", add_help=False)
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Subcommands with Aliases
@@ -1804,6 +1826,11 @@ def main():
             # This enforces the flow: Users see who they are before entering.
             check_for_skill_updates()
             select_persona()
+            return
+
+        # Handle custom version flag
+        if "--version" in sys.argv or "-v" in sys.argv:
+            print(f"Jaavis v{VERSION}")
             return
 
         # Handle custom help flag to use our Rich help

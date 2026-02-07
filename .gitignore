@@ -25,6 +25,7 @@ build/
 .supabase/
 supabase/.temp/
 
+
 # Library (Optional: Users usually keep their own library separately,
 # but we can include the default templates in the repo)
 # library/skills/
