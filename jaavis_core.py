@@ -773,6 +773,20 @@ def harvest_skill(doc_path=None):
         new_content = new_content.replace("[Pros List]", pros_list)
         new_content = new_content.replace("[Cons List]", cons_list)
 
+        # Deployment Skills: Auto-Inject Execution Tag & Language
+        if is_deploy:
+            # Replace standard code block with Executable Block
+            # Attempts to match common template format
+            replacements = [
+                ("```\n(Paste your code snippet here)", "<!-- JAAVIS:EXEC -->\n```bash\n(Paste your code snippet here)"),
+                ("```\r\n(Paste your code snippet here)", "<!-- JAAVIS:EXEC -->\n```bash\n(Paste your code snippet here)")
+            ]
+            for old, new in replacements:
+                if old in new_content:
+                    new_content = new_content.replace(old, new)
+                    break
+
+
         snippet = defaults.get("snippet", "")
         if snippet:
              new_content = new_content.replace("(Paste your code snippet here)", snippet)
@@ -2175,7 +2189,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.0.11"
+VERSION = "1.0.12"
 
 # ==========================================
 # MAINTAINER
