@@ -2,7 +2,7 @@ class Jaavis < Formula
   desc "One-Army AI Orchestrator & Skill Library"
   homepage "https://github.com/ponli550/JaavisCLI"
   url "https://github.com/ponli550/JaavisCLI/archive/refs/tags/v1.0.0.tar.gz"
-  sha256 "REPLACE_WITH_ACTUAL_SHA256"
+  sha256 "96bca3349c35d117b7707414118ef9ae70ccce5287388172b98d2f6df9b82e6f"
   license "MIT"
 
   depends_on "python@3.11"
@@ -10,11 +10,10 @@ class Jaavis < Formula
 
   def install
     # Install core script
-    bin.install "src/jaavis_core.py" => "jaavis"
+    bin.install "jaavis_core.py" => "jaavis"
 
-    # Symlink face and library templates to the bin directory or shared folder
-    # Homebrew formulae usually keep libraries in libexec or share
-    pkgshare.install "src/logo.md"
+    # Install support files
+    pkgshare.install "logo.md"
     pkgshare.install "library"
   end
 
