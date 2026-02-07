@@ -43,15 +43,21 @@ def get_default_library_path():
     if os.environ.get("JAAVIS_LIBRARY_PATH"):
         return os.environ.get("JAAVIS_LIBRARY_PATH")
 
-    # 2. External Home (~/.jaavis/library) - PREFERRED if exists
-    if os.path.exists(EXTERNAL_LIB_PATH):
-        return EXTERNAL_LIB_PATH
+    # 2. External Home (~/.jaavis/library) - FORCE PERSISTENCE
+    # If the external library doesn't exist, we must create it from the bundle
+    # This ensures upgrades (which change BUNDLED_LIB_PATH) don't wipe user data.
+    if not os.path.exists(EXTERNAL_LIB_PATH):
+        if os.path.exists(BUNDLED_LIB_PATH):
+             try:
+                 print(f"📦 First Run: Migrating bundled library to {EXTERNAL_LIB_PATH}...")
+                 shutil.copytree(BUNDLED_LIB_PATH, EXTERNAL_LIB_PATH)
+             except Exception as e:
+                 print(f"⚠️  Migration Warning: Could not copy bundled library: {e}")
+        else:
+             # Create empty if bundle missing
+             os.makedirs(EXTERNAL_LIB_PATH, exist_ok=True)
 
-    # 3. Bundled (Fallback for fresh install if bundled exists)
-    if os.path.exists(BUNDLED_LIB_PATH):
-         return BUNDLED_LIB_PATH
-
-    # 4. Default to External (so it can be created/cloned)
+    # 3. Always return the external path as the source of truth
     return EXTERNAL_LIB_PATH
 
 DEFAULT_LIBRARY_PATH = get_default_library_path()
@@ -688,6 +694,18 @@ def harvest_skill(doc_path=None):
     # Smart Harvest: Pre-fill from doc
     defaults = {}
     if doc_path:
+        # Check if file exists locally
+        if not os.path.exists(doc_path):
+             # Try to find it in the library
+             found_in_lib = None
+             for root, dirs, files in os.walk(lib_path):
+                 if doc_path in files:
+                     found_in_lib = os.path.join(root, doc_path)
+                     break
+             if found_in_lib:
+                 doc_path = found_in_lib
+                 print(f"[dim]Found in library: {doc_path}[/dim]")
+
         print(f"[bold cyan]📄 Parsing documentation: {doc_path}...[/bold cyan]")
         parsed = parse_markdown_doc(doc_path)
         if parsed:
@@ -2189,7 +2207,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.0.12"
+VERSION = "1.1.0"
 
 # ==========================================
 # MAINTAINER
@@ -2284,7 +2302,9 @@ def main():
 
         # Command Router
         if args.command in ["list", "ls"]:
-            list_skills()
+            # Upgrade: 'list' now launches the Interactive TUI
+            import jaavis_tui
+            jaavis_tui.run(get_active_library_path())
         elif args.command in ["harvest", "new"]:
             harvest_skill(args.doc)
         elif args.command == "search":
