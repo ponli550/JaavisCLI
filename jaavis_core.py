@@ -1411,11 +1411,46 @@ def deploy_project():
                 ]
             elif grade == "A": # Fortress (K8s + Audits)
                 steps = [
-                    ("Running E2E Tests", "npm run test:e2e"),
-                    ("Security Audit", "npm audit"),
+                    ("Running E2E Tests", "npm run test:e2e")
+                ]
+
+                # ---------------------------------------------------------
+                # DYNAMIC PACKAGE MANAGER DETECTION FOR AUDIT
+                # ---------------------------------------------------------
+                cwd = os.getcwd()
+                audit_cmd = None
+
+                # 1. Check for PNPM
+                if os.path.exists(os.path.join(cwd, "pnpm-lock.yaml")):
+                    audit_cmd = "pnpm audit"
+                # 2. Check for Bun
+                elif os.path.exists(os.path.join(cwd, "bun.lockb")):
+                    # Bun doesn't have a native audit yet (as of v1.0).
+                    # If package-lock.json also exists, fall back to npm.
+                    if os.path.exists(os.path.join(cwd, "package-lock.json")):
+                        audit_cmd = "npm audit"
+                    else:
+                        console.print("[yellow]⚠️  Bun detected but no 'bun audit' available. Skipping audit step.[/yellow]")
+                        audit_cmd = None
+                # 3. Check for Yarn
+                elif os.path.exists(os.path.join(cwd, "yarn.lock")):
+                    audit_cmd = "yarn audit"
+                # 4. Default to NPM (Standard)
+                else:
+                    # Grade A requires a lockfile. If missing, generate it.
+                    if not os.path.exists(os.path.join(cwd, "package-lock.json")):
+                         steps.append(("Generating Lockfile (Required for Audit)", "npm i --package-lock-only"))
+                    audit_cmd = "npm audit"
+
+                if audit_cmd:
+                    steps.append(("Security Audit", audit_cmd))
+
+                # ---------------------------------------------------------
+
+                steps.extend([
                     ("Applying K8s Manifests", "kubectl apply -f k8s/"),
                     ("Migrating DB", "npx supabase migration up")
-                ]
+                ])
 
         if selected_strategy["type"] == "harvested":
             console.print(f"[bold green]🚀 Launching Harvested Strategy: {selected_strategy['name']}[/bold green]")
@@ -2063,7 +2098,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.0.8"
+VERSION = "1.0.9"
 
 # ==========================================
 # MAINTAINER
