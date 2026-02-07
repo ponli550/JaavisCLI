@@ -2,7 +2,7 @@ class Jaavis < Formula
   desc "One-Army AI Orchestrator & Skill Library"
   homepage "https://github.com/ponli550/JaavisCLI"
   url "https://github.com/ponli550/JaavisCLI/archive/refs/tags/v1.0.0.tar.gz"
-  sha256 "96bca3349c35d117b7707414118ef9ae70ccce5287388172b98d2f6df9b82e6f"
+  sha256 "bd2adcb0234366310d78237599cd87218e3fb8946a41a5a0bd19c17c6980b915"
   license "MIT"
 
   depends_on "python@3.11"
