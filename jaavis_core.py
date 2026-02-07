@@ -180,11 +180,12 @@ def show_welcome():
     print(f"{GREY}====================================================={RESET}")
     print(f"I am here to help you build, harvest, and deploy at speed.")
     print(f"\n{BOLD}Quick Start Guide:{RESET}")
-    print(f"  1. {CYAN}jaavis init{RESET}    → Start a new project (One-Army Protocol)")
-    print(f"  2. {CYAN}jaavis harvest{RESET} → Save your knowledge as reusable skills")
-    print(f"  3. {CYAN}jaavis deploy{RESET}  → Ship your project to production")
-    print(f"  4. {CYAN}jaavis sync{RESET}    → Update your skill library from critical missions")
-    print(f"  5. {CYAN}jaavis help{RESET}  → Show this help message")
+    print(f"  1. {CYAN}jaavis list --text{RESET}       → Interactive Knowledge Base (TUI)")
+    print(f"  2. {CYAN}jaavis init{RESET}       → Start a new project (One-Army Protocol)")
+    print(f"  3. {CYAN}jaavis harvest <doc>{RESET}    → Save your knowledge as reusable skills")
+    print(f"  4. {CYAN}jaavis deploy{RESET}     → Ship your project to production")
+    print(f"  5. {CYAN}jaavis sync{RESET}       → Update your skill library from critical missions")
+    print(f"  6. {CYAN}jaavis help{RESET}       → Show this help message")
 
 def select_persona():
     """Interactive Persona Selection & Configuration"""
@@ -696,12 +697,24 @@ def harvest_skill(doc_path=None):
     if doc_path:
         # Check if file exists locally
         if not os.path.exists(doc_path):
-             # Try to find it in the library
+             # Try to find it in the library (Exact + Fuzzy)
              found_in_lib = None
+
+             # 1. Exact Match
              for root, dirs, files in os.walk(lib_path):
                  if doc_path in files:
                      found_in_lib = os.path.join(root, doc_path)
                      break
+
+             # 2. Fuzzy Match (if exact failed)
+             if not found_in_lib:
+                 for root, dirs, files in os.walk(lib_path):
+                     for f in files:
+                         if doc_path.lower() in f.lower() and f.endswith(".md"):
+                              found_in_lib = os.path.join(root, f)
+                              break
+                     if found_in_lib: break
+
              if found_in_lib:
                  doc_path = found_in_lib
                  print(f"[dim]Found in library: {doc_path}[/dim]")
@@ -2207,7 +2220,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 
 # ==========================================
 # MAINTAINER
@@ -2302,11 +2315,16 @@ def main():
 
         # Command Router
         if args.command in ["list", "ls"]:
-            # Upgrade: 'list' now launches the Interactive TUI
-            import jaavis_tui
-            jaavis_tui.run(get_active_library_path())
+            if getattr(args, 'text', False):
+                 list_skills()
+            else:
+                 # Upgrade: 'list' now launches the Interactive TUI
+                 import jaavis_tui
+                 jaavis_tui.run(get_active_library_path())
         elif args.command in ["harvest", "new"]:
-            harvest_skill(args.doc)
+            # Support both positional and flag
+            doc_arg = args.doc if args.doc else getattr(args, 'doc_flag', None)
+            harvest_skill(doc_arg)
         elif args.command == "search":
             search_skills(args.query)
         elif args.command == "open":
