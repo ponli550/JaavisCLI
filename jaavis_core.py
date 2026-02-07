@@ -829,11 +829,37 @@ def merge_skills():
 
         console = Console()
         console = Console()
-        # ALWAYS fetch skills from the Programmer (Default) Library for blueprints
-        lib_path = DEFAULT_LIBRARY_PATH
-
         console.print(Panel.fit("[bold magenta]🧬 Jaavis Blueprint Merge[/bold magenta]", border_style="magenta"))
         console.print("[dim]Create a unified project from separate Frontend and Backend skills.[/dim]\n")
+
+        # 0.5 Selection of Library Source
+        config = load_config()
+        current_p = config.get("current_persona", "programmer")
+        personas_dict = config.get("personas", {})
+
+        # Build options
+        options = [f"Active Persona ({current_p})", "All Combined"]
+        for p in sorted(personas_dict.keys()):
+            options.append(f"Persona: {p}")
+
+        idx = interactive_menu("Select Library Source for Skills", options)
+        choice = options[idx]
+
+        lib_paths = []
+        if choice.startswith("Active Persona"):
+            p_path = personas_dict.get(current_p, {}).get("path", DEFAULT_LIBRARY_PATH)
+            lib_paths.append(p_path)
+        elif choice == "All Combined":
+            for p in personas_dict:
+                p_path = personas_dict[p].get("path")
+                if p_path: lib_paths.append(p_path)
+        else:
+            p_name = choice.replace("Persona: ", "")
+            p_path = personas_dict.get(p_name, {}).get("path")
+            if p_path: lib_paths.append(p_path)
+
+        if not lib_paths:
+            lib_paths = [DEFAULT_LIBRARY_PATH]
 
         # 0. Ensure Project Init
         if not os.path.exists(os.path.join(os.getcwd(), ".jaavisrc")):
@@ -847,20 +873,24 @@ def merge_skills():
 
         # Recursive Scan and Parse
         with console.status("[bold cyan]Scanning library for skills...") as status:
-            for root, dirs, files in os.walk(lib_path):
-                for f in files:
-                    if f.endswith(".md") and f != "TEMPLATE_SKILL.md":
-                        path = os.path.join(root, f)
-                        try:
-                            with open(path, 'r') as file:
-                                content = file.read()
-                                meta = parse_frontmatter(content)
-                                if meta:
-                                    skill_id = f.replace(".md", "")
-                                    all_skills[skill_id] = meta
-                                    all_skills[skill_id]['path'] = path
-                        except:
-                            continue
+            for lib_path in lib_paths:
+                if not os.path.exists(lib_path): continue
+                for root, dirs, files in os.walk(lib_path):
+                    for f in files:
+                        if f.endswith(".md") and f != "TEMPLATE_SKILL.md":
+                            path = os.path.join(root, f)
+                            try:
+                                with open(path, 'r') as file:
+                                    content = file.read()
+                                    meta = parse_frontmatter(content)
+                                    if meta:
+                                        skill_id = f.replace(".md", "")
+                                        # Deduplicate by using first-found in priority or just combining
+                                        if skill_id not in all_skills:
+                                            all_skills[skill_id] = meta
+                                            all_skills[skill_id]['path'] = path
+                            except:
+                                continue
 
         if not all_skills:
             console.print("[red]No skills with valid metadata found in library.[/red]")
@@ -1967,7 +1997,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 
 # ==========================================
 # MAINTAINER
