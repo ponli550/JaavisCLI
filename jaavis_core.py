@@ -142,6 +142,18 @@ def load_face():
     else:
         print(f"{CYAN}🤖 JAAVIS{RESET}")
 
+def show_welcome():
+    """Display onboarding message for new users"""
+    print(f"\n{MAGENTA}👋 Welcome to Jaavis - Your One-Army Orchestrator{RESET}")
+    print(f"{GREY}====================================================={RESET}")
+    print(f"I am here to help you build, harvest, and deploy at speed.")
+    print(f"\n{BOLD}🚀 Quick Start Guide:{RESET}")
+    print(f"  1. {CYAN}jaavis init{RESET}    → Start a new project (One-Army Protocol)")
+    print(f"  2. {CYAN}jaavis harvest{RESET} → Save your knowledge as reusable skills")
+    print(f"  3. {CYAN}jaavis deploy{RESET}  → Ship your project to production")
+    print(f"  4. {CYAN}jaavis sync{RESET}    → Update your skill library from critical missions")
+    print(f"\n{YELLOW}Let's get you validated. First, select your role below:{RESET}\n")
+
 def select_persona():
     """Interactive Persona Selection & Configuration"""
     load_face()
@@ -1618,17 +1630,27 @@ def sync_skills():
     if not os.path.exists(os.path.join(lib_path, ".git")):
         print(f"{YELLOW}Warning: This library is not currently linked to a remote hub.{RESET}")
         try:
-            choice = input(f"{CYAN}? Would you like to link a GitHub/Git repository? (y/n): {RESET}").strip().lower()
-            if choice == 'y':
+            print(f"{CYAN}? Choose Sync Source:{RESET}")
+            print(f"  [1] Official Jaavis Library (Recommended)")
+            print(f"  [2] Custom GitHub/Git Repository ( If you want to sync your own library)")
+            print(f"  [n] Cancel")
+
+            choice = input(f"{CYAN}Select [1]: {RESET}").strip().lower()
+
+            remote_url = ""
+            if choice == '' or choice == '1':
+                remote_url = "https://github.com/ponli550/JaavisCLI.git"
+            elif choice == '2':
                 remote_url = input(f"{CYAN}? Remote Git URL: {RESET}").strip()
-                if remote_url:
-                    if not link_remote_library(lib_path, remote_url):
-                        return
-                else:
-                    print(f"{RED}No URL provided. Aborting.{RESET}")
-                    return
             else:
                 print(f"{YELLOW}Sync aborted.{RESET}")
+                return
+
+            if remote_url:
+                if not link_remote_library(lib_path, remote_url):
+                    return
+            else:
+                print(f"{RED}No URL provided. Aborting.{RESET}")
                 return
         except KeyboardInterrupt:
             print(f"\n{RED}Aborted.{RESET}")
@@ -1823,6 +1845,13 @@ def main():
         # To catch 'jaavis' with no args, we check sys.argv
         if len(sys.argv) == 1:
             # SMART DEFAULT: Persona Selection -> TUI
+
+            # Show Welcome if Config Missing (New User)
+            config_path = os.path.join(os.getcwd(), ".jaavisrc")
+            global_config = os.path.expanduser("~/.jaavisrc")
+            if not os.path.exists(config_path) and not os.path.exists(global_config):
+                show_welcome()
+
             # This enforces the flow: Users see who they are before entering.
             check_for_skill_updates()
             select_persona()

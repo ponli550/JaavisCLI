@@ -1,16 +1,10 @@
 ---
-name: Sim Deploy
-description: "This is a test deployment strategy."
-grade: C
+title: Tender
+domain: tendersystem
 tags: [tag1, tag2]
-pros:
-  - "Simple"
-  - "Fast"
-cons:
-  - "None"
 ---
 
-# Sim Deploy
+# Tender
 
 ## Best Practice
 (Describe the best practice pattern here)
