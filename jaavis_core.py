@@ -28,8 +28,33 @@ if not os.path.exists(os.path.join(BASE_DIR, "library")) and not os.path.exists(
     if os.path.exists(os.path.join(brew_share, "library")):
         BASE_DIR = brew_share
 
+# Add BASE_DIR to path for modular imports (jaavis_tui)
+if BASE_DIR not in sys.path:
+    sys.path.append(BASE_DIR)
+
 # Default Library (Programmer)
-DEFAULT_LIBRARY_PATH = os.path.join(BASE_DIR, "library")
+# PRIORITIZE EXTERNAL HOME FIRST
+JAAVIS_HOME = os.path.join(HOME, ".jaavis")
+EXTERNAL_LIB_PATH = os.path.join(JAAVIS_HOME, "library")
+BUNDLED_LIB_PATH = os.path.join(BASE_DIR, "library")
+
+def get_default_library_path():
+    # 1. Env Var
+    if os.environ.get("JAAVIS_LIBRARY_PATH"):
+        return os.environ.get("JAAVIS_LIBRARY_PATH")
+
+    # 2. External Home (~/.jaavis/library) - PREFERRED if exists
+    if os.path.exists(EXTERNAL_LIB_PATH):
+        return EXTERNAL_LIB_PATH
+
+    # 3. Bundled (Fallback for fresh install if bundled exists)
+    if os.path.exists(BUNDLED_LIB_PATH):
+         return BUNDLED_LIB_PATH
+
+    # 4. Default to External (so it can be created/cloned)
+    return EXTERNAL_LIB_PATH
+
+DEFAULT_LIBRARY_PATH = get_default_library_path()
 TEMPLATE_PATH = os.path.join(DEFAULT_LIBRARY_PATH, "templates/skill.md")
 LOGO_PATH = os.path.join(BASE_DIR, "logo.md")
 
@@ -520,6 +545,9 @@ def list_skills():
 
     skills_count = 0
     for root, dirs, files in os.walk(lib_path):
+        # Prune .git and __pycache__ from traversal
+        dirs[:] = [d for d in dirs if d not in [".git", "__pycache__"]]
+
         level = root.replace(lib_path, '').count(os.sep)
         indent = ' ' * 4 * (level)
         subindent = ' ' * 4 * (level + 1)
@@ -800,7 +828,9 @@ def merge_skills():
         import json
 
         console = Console()
-        lib_path = get_active_library_path()
+        console = Console()
+        # ALWAYS fetch skills from the Programmer (Default) Library for blueprints
+        lib_path = DEFAULT_LIBRARY_PATH
 
         console.print(Panel.fit("[bold magenta]🧬 Jaavis Blueprint Merge[/bold magenta]", border_style="magenta"))
         console.print("[dim]Create a unified project from separate Frontend and Backend skills.[/dim]\n")
@@ -1667,9 +1697,46 @@ def sync_skills():
     print(f"\n{MAGENTA}🔄 Syncing Skills for {persona}{RESET}")
     print(f"{GREY}Path: {lib_path}{RESET}")
 
-    # 1. Check if git repository
+    # 1. Check if library exists (Split Architecture Support)
+    if not os.path.exists(lib_path):
+        print(f"{YELLOW}⚠️  No Skill Library found at {lib_path}{RESET}")
+        print(f"{CYAN}Initializing your Knowledge Base (Brain)...{RESET}")
+
+        try:
+            print(f"{CYAN}? Choose Source:{RESET}")
+            print(f"  [1] Official Jaavis Library (Recommended)")
+            print(f"  [2] Custom Git Repository")
+
+            choice = input(f"{CYAN}Select [1]: {RESET}").strip().lower()
+
+            remote_url = ""
+            if choice == '' or choice == '1':
+                remote_url = "https://github.com/ponli550/JaavisCLI.git"
+            elif choice == '2':
+                remote_url = input(f"{CYAN}? Remote Git URL: {RESET}").strip()
+            else:
+                print("Aborted.")
+                return
+
+            if remote_url:
+                parent_dir = os.path.dirname(lib_path)
+                if not os.path.exists(parent_dir):
+                    os.makedirs(parent_dir)
+
+                print(f"{CYAN}Cloning from {remote_url}...{RESET}")
+                subprocess.run(["git", "clone", remote_url, lib_path], check=True)
+                print(f"{GREEN}✔ Library initialized successfully!{RESET}")
+                return
+            else:
+                 print("No URL provided.")
+                 return
+        except Exception as e:
+             print(f"{RED}Error initializing library: {e}{RESET}")
+             return
+
+    # 2. Check if git repository (Existing Library)
     if not os.path.exists(os.path.join(lib_path, ".git")):
-        print(f"{YELLOW}Warning: This library is not currently linked to a remote hub.{RESET}")
+        print(f"{YELLOW}Warning: This library is not linked to a remote hub.{RESET}")
         try:
             print(f"{CYAN}? Choose Sync Source:{RESET}")
             print(f"  [1] Official Jaavis Library (Recommended)")
@@ -1697,7 +1764,46 @@ def sync_skills():
             print(f"\n{RED}Aborted.{RESET}")
             return
 
-    # 2. Execute Sync
+            print(f"\n{RED}Aborted.{RESET}")
+            return
+
+    # 2. Pre-Sync Safety Check (Dirty State)
+    needs_pop = False
+    status_output = ""
+    try:
+        # Check for uncommitted changes
+        status_output = subprocess.run(["git", "status", "--porcelain"], cwd=lib_path, capture_output=True, text=True).stdout.strip()
+    except:
+        pass
+
+    if status_output:
+        print(f"\n{YELLOW}⚠️  Uncommitted changes detected in library:{RESET}")
+        # Show brief status
+        print(subprocess.run(["git", "status", "-s"], cwd=lib_path, capture_output=True, text=True).stdout)
+
+        print(f"{CYAN}? How do you want to proceed?{RESET}")
+        options = [
+            "Stash changes, Sync, then Pop stash (Recommended)",
+            "Commit changes, then Sync (Merge)",
+            "Abort (I will fix it manually)"
+        ]
+        choice = interactive_menu("Select Action", options)
+
+        if choice == 0: # Stash
+            print(f"{YELLOW}Stashing changes...{RESET}")
+            subprocess.run(["git", "stash"], cwd=lib_path, check=True)
+            needs_pop = True
+        elif choice == 1: # Commit
+            msg = input(f"{CYAN}? Commit Message: {RESET}").strip()
+            if not msg: msg = "Auto-save before sync"
+            subprocess.run(["git", "add", "."], cwd=lib_path, check=True)
+            subprocess.run(["git", "commit", "-m", msg], cwd=lib_path, check=True)
+            needs_pop = False
+        else:
+            print("Aborted.")
+            return
+
+    # 3. Execute Sync
     try:
         print(f"{CYAN}Pulling latest updates...{RESET}")
         subprocess.run(["git", "fetch", "origin"], cwd=lib_path, check=True, capture_output=True)
@@ -1720,6 +1826,11 @@ def sync_skills():
                          if line.strip(): print(f"  {line.strip()}")
         else:
             print(f"{RED}Error during sync: {result.stderr.strip()}{RESET}")
+
+        if result.returncode == 0 and needs_pop:
+             print(f"{YELLOW}Restoring stashed changes...{RESET}")
+             subprocess.run(["git", "stash", "pop"], cwd=lib_path)
+
     except Exception as e:
         print(f"{RED}Error: {e}{RESET}")
 
@@ -1737,7 +1848,10 @@ def check_for_skill_updates():
     """Background check for skill library updates (throttled to 24h)."""
     global SKILL_UPDATES_AVAILABLE
     config = load_config()
-    lib_path = get_active_library_path()
+    global SKILL_UPDATES_AVAILABLE
+    config = load_config()
+    # Check updates for CORE library (Programmer) only
+    lib_path = DEFAULT_LIBRARY_PATH
 
     # 1. Throttling Check
     last_check_str = config.get("auto_sync", {}).get("last_check")
@@ -1825,7 +1939,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 # ==========================================
 # MAINTAINER

@@ -15,6 +15,8 @@ class Jaavis < Formula
     # Install support files
     pkgshare.install "logo.md"
     pkgshare.install "library"
+    pkgshare.install "jaavis_tui.py"
+    pkgshare.install "jaavis_renderer.py"
   end
 
   def post_install
