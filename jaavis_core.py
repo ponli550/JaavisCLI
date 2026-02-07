@@ -1939,7 +1939,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 # ==========================================
 # MAINTAINER
