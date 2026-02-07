@@ -20,12 +20,17 @@ CONFIG_PATH = os.path.join(HOME, ".jaavis_config.json")
 WORKFLOW_PATH = os.path.join(HOME, ".agent/workflows/hei_jaavis.md")
 
 # Determine the absolute directory where this script is located
-# This ensures Jaavis finds its Brain/Face regardless of where you run it from.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Homebrew Compatibility: If installed via brew, resources are in ../share/jaavis
+if not os.path.exists(os.path.join(BASE_DIR, "library")) and not os.path.exists(os.path.join(BASE_DIR, "logo.md")):
+    brew_share = os.path.join(BASE_DIR, "..", "share", "jaavis")
+    if os.path.exists(os.path.join(brew_share, "library")):
+        BASE_DIR = brew_share
 
 # Default Library (Programmer)
 DEFAULT_LIBRARY_PATH = os.path.join(BASE_DIR, "library")
-TEMPLATE_PATH = os.path.join(DEFAULT_LIBRARY_PATH, "templates/skill.md") # Keep template in default for now or make dynamic
+TEMPLATE_PATH = os.path.join(DEFAULT_LIBRARY_PATH, "templates/skill.md")
 LOGO_PATH = os.path.join(BASE_DIR, "logo.md")
 
 # ANSI Colors
@@ -517,7 +522,12 @@ def list_skills():
 
         for f in files:
             if f.endswith(".md") and f != "TEMPLATE_SKILL.md":
-                print(f"{GREEN}{subindent}📜 {f}{RESET}")
+                path = os.path.join(root, f)
+                mtime = os.path.getmtime(path)
+                is_recent = (time.time() - mtime) < 86400 # 24 hours
+                tag = f" {YELLOW}(RECENT){RESET}" if is_recent else ""
+
+                print(f"{GREEN}{subindent}📜 {f}{tag}{RESET}")
                 skills_count += 1
 
     if skills_count == 0:
@@ -744,8 +754,8 @@ def merge_skills():
         from rich.console import Console
         from rich.prompt import Prompt
         from rich.panel import Panel
+        from rich.table import Table
         import json
-        import yaml # PyYAML required for frontmatter
 
         console = Console()
         lib_path = get_active_library_path()
@@ -758,31 +768,33 @@ def merge_skills():
             console.print("[yellow]Project not initialized. Running 'jaavis init' first...[/yellow]")
             init_project()
 
-
-
         # 1. Tech Stack Advisor (Comparison Table)
         console.print("\n[bold cyan]💡 Tech Stack Advisor[/bold cyan]")
 
         all_skills = {} # name -> metadata
-        search_dirs = ["frontend", "ui", "devops", "backend", "qowi"]
 
-        # Scan and Parse
-        for d in search_dirs:
-            p = os.path.join(lib_path, "skills", d)
-            if os.path.exists(p):
-                for f in os.listdir(p):
-                    if f.endswith(".md"):
-                        path = os.path.join(p, f)
-                        with open(path, 'r') as file:
-                            content = file.read()
-                            meta = parse_frontmatter(content)
-                            if meta:
-                                skill_id = f.replace(".md", "")
-                                all_skills[skill_id] = meta
-                                all_skills[skill_id]['path'] = path
+        # Recursive Scan and Parse
+        with console.status("[bold cyan]Scanning library for skills...") as status:
+            for root, dirs, files in os.walk(lib_path):
+                for f in files:
+                    if f.endswith(".md") and f != "TEMPLATE_SKILL.md":
+                        path = os.path.join(root, f)
+                        try:
+                            with open(path, 'r') as file:
+                                content = file.read()
+                                meta = parse_frontmatter(content)
+                                if meta:
+                                    skill_id = f.replace(".md", "")
+                                    all_skills[skill_id] = meta
+                                    all_skills[skill_id]['path'] = path
+                        except:
+                            continue
+
+        if not all_skills:
+            console.print("[red]No skills with valid metadata found in library.[/red]")
+            return
 
         # Display Comparison Table
-        from rich.table import Table
         table = Table(title="Available Skills", show_header=True, header_style="bold magenta", box=None)
         table.add_column("Skill ID", style="cyan")
         table.add_column("Name", style="green")
@@ -791,7 +803,7 @@ def merge_skills():
         table.add_column("Pros", style="blue")
         table.add_column("Cons", style="red")
 
-        # Sort by Grade (Ascending A->B->C or similar logic, simplistic here)
+        # Sort by Grade
         for skill_id, meta in sorted(all_skills.items(), key=lambda item: item[1].get('grade', 'Z')):
             pros = ", ".join(meta.get('pros', []))
             cons = ", ".join(meta.get('cons', []))
@@ -809,23 +821,10 @@ def merge_skills():
 
         # 2. Select Frontend
         console.print("\n[bold cyan]1. Select Frontend Skill[/bold cyan]")
-
-        # Filter Frontends
-        frontend_options = [sid for sid, m in all_skills.items() if 'frontend' in m.get('tags', [])]
-
-        # Fallback to file search if no metadata tags found
-        if not frontend_options:
-            search_dirs = ["frontend", "ui"]
-            for d in search_dirs:
-                p = os.path.join(lib_path, "skills", d)
-                if os.path.exists(p):
-                    for f in os.listdir(p):
-                        if f.endswith(".md"):
-                            frontend_options.append(f.replace(".md", ""))
+        frontend_options = [sid for sid, m in all_skills.items() if 'frontend' in [t.lower() for t in m.get('tags', [])] or 'ui' in [t.lower() for t in m.get('tags', [])]]
 
         if not frontend_options:
-             console.print("[red]No frontend skills found.[/red]")
-             return
+            frontend_options = sorted(all_skills.keys())
 
         idx = interactive_menu("Choose Frontend", frontend_options)
         frontend_choice = frontend_options[idx]
@@ -833,109 +832,74 @@ def merge_skills():
 
         # 3. Select Backend
         console.print("\n[bold cyan]2. Select Backend Skill[/bold cyan]")
-
-        # Filter Backends
-        backend_options = [sid for sid, m in all_skills.items() if 'backend' in m.get('tags', [])]
-
-        # Fallback
-        if not backend_options:
-            search_dirs = ["devops", "backend", "qowi"]
-            for d in search_dirs:
-                p = os.path.join(lib_path, "skills", d)
-                if os.path.exists(p):
-                    for f in os.listdir(p):
-                        if f.endswith(".md"):
-                            backend_options.append(f.replace(".md", ""))
+        backend_options = [sid for sid, m in all_skills.items() if 'backend' in [t.lower() for t in m.get('tags', [])] or 'api' in [t.lower() for t in m.get('tags', [])]]
 
         if not backend_options:
-             console.print("[yellow]No backend skills found. Skipping backend merge.[/yellow]")
-             backend_choice = None
+            backend_options = sorted(all_skills.keys())
+        backend_options.append("None (Frontend Only)")
+
+        idx = interactive_menu("Choose Backend", backend_options)
+        if idx == len(backend_options) - 1:
+            backend_choice = None
+            console.print("[dim]Backend skipped.[/dim]")
         else:
-            idx = interactive_menu("Choose Backend", backend_options)
             backend_choice = backend_options[idx]
             console.print(f"[green]✔ Selected:[/green] {backend_choice}")
 
-        # 3. Update .jaavisrc (Blueprint Definition)
+        # 4. Update .jaavisrc (Blueprint Definition)
         config = load_config_local()
         config["type"] = "blueprint"
         config["frontend"] = frontend_choice
         if backend_choice:
             config["backend"] = backend_choice
 
-        # Save
-        with open(os.path.join(os.getcwd(), ".jaavisrc"), 'w') as f:
-             json.dump(config, f, indent=2)
+        with open(".jaavisrc", "w") as f:
+            json.dump(config, f, indent=2)
 
-        console.print("\n[bold green]💾 Blueprint Saved![/bold green]")
+        # 5. Merge Execution (Apply Skills)
+        console.print(f"\n[bold magenta]🚀 Merging Blueprint...[/bold magenta]")
 
-        # 4. Validation (Pre-flight)
-        console.print("\n[bold]🩺 Verifying Blueprint Integrity...[/bold]")
+        # Apply Frontend
+        console.print(f"\n[cyan]Applying Frontend: {frontend_choice}[/cyan]")
+        apply_skill(frontend_choice, context={"target_dir": "apps/web"})
 
-        # Check if folders exist (Mock implementation of applying the skills)
-        # Real implementation would call apply_skill() here targeting specific folders
+        # Apply Backend
+        if backend_choice:
+            console.print(f"\n[cyan]Applying Backend: {backend_choice}[/cyan]")
+            apply_skill(backend_choice, context={"target_dir": "apps/api"})
 
-        missing = []
-        if not os.path.exists("apps/web"):
-            missing.append("apps/web (Frontend)")
+        console.print("\n[green]Merge Sequence Completed.[/green]")
 
-        if backend_choice and not os.path.exists("apps/api"):
-             missing.append("apps/api (Backend)")
+        # 6. Setup / Post-Install
+        if Prompt.ask("\nRun automated setup (npm install & build)?", choices=["y", "n"], default="y") == "y":
+            console.print("\n[bold yellow]⚙️  Running Setup...[/bold yellow]")
 
-        if missing:
-            console.print("[yellow]⚠️  Blueprint Incomplete. Missing components:[/yellow]")
-            for m in missing:
-                console.print(f"  - {m}")
+            # Frontend Setup
+            if os.path.exists("apps/web/package.json"):
+                console.print("  • Frontend: Installing dependencies...")
+                # Run with live output instead of silent blocking
+                subprocess.run("cd apps/web && npm install", shell=True, executable='/bin/zsh')
 
-            apply_now = Prompt.ask("\nAttempt to apply skills now?", choices=["y", "n"], default="y")
-            if apply_now == "y":
-                # FRONTEND APPLY
-                console.print(f"\n[bold]Applying {frontend_choice} to apps/web...[/bold]")
-                apply_skill(frontend_choice, context={"target_dir": "apps/web"})
+            # Backend/Docker Setup
+            backend_compose_file = None
+            if os.path.exists("apps/api/compose.yaml"):
+                backend_compose_file = "apps/api/compose.yaml"
+            elif os.path.exists("apps/api/docker-compose.yml"):
+                backend_compose_file = "apps/api/docker-compose.yml"
 
-                # BACKEND APPLY
-                if backend_choice:
-                    console.print(f"\n[bold]Applying {backend_choice} to apps/api...[/bold]")
-                    apply_skill(backend_choice, context={"target_dir": "apps/api"})
+            if backend_compose_file:
+                console.print(f"  • Docker: Linking backend ({backend_compose_file})...")
+                with open("docker-compose.yml", "w") as f:
+                    f.write(f"# One-Army Docker Compose\n# Root Orchestrator\ninclude:\n  - {backend_compose_file}\n")
 
-                console.print("\n[green]Merge Sequence Completed.[/green]")
+            if os.path.exists("docker-compose.yml") or os.path.exists("docker-compose.yaml"):
+                console.print("  • Docker: Building containers...")
+                subprocess.run("docker compose build", shell=True, executable='/bin/zsh')
 
-                # CLEANUP / POST-INSTALL
-                if Prompt.ask("\nRun automated setup (npm install & build)?", choices=["y", "n"], default="y") == "y":
-                    console.print("\n[bold yellow]⚙️  Running Setup...[/bold yellow]")
+            console.print("[green]✨ Blueprint Setup Complete![/green]")
 
-                    # Frontend Setup
-                    if os.path.exists("apps/web/package.json"):
-                        console.print("  • Frontend: Installing dependencies...")
-                        subprocess.run("cd apps/web && npm install", shell=True, executable='/bin/zsh')
-
-                    # Backend/Docker Setup
-                    # Rewrite root docker-compose.yml to include the backend service
-                    # Rewrite root docker-compose.yml to include the backend service
-                    backend_compose_file = None
-                    if os.path.exists("apps/api/compose.yaml"):
-                        backend_compose_file = "apps/api/compose.yaml"
-                    elif os.path.exists("apps/api/docker-compose.yml"):
-                        backend_compose_file = "apps/api/docker-compose.yml"
-
-                    if backend_compose_file:
-                        console.print(f"  • Docker: Linking backend ({backend_compose_file})...")
-                        with open("docker-compose.yml", "w") as f:
-                            f.write(f"# One-Army Docker Compose\n# Root Orchestrator\ninclude:\n  - {backend_compose_file}\n")
-                    else:
-                        console.print("  [yellow]⚠️  Backend compose file not found (checked apps/api/compose.yaml & docker-compose.yml)[/yellow]")
-
-                    if os.path.exists("docker-compose.yml") or os.path.exists("docker-compose.yaml"):
-                        console.print("  • Docker: Building containers...")
-                        subprocess.run("docker compose build", shell=True, executable='/bin/zsh')
-
-                    console.print("[green]✨ Blueprint Setup Complete![/green]")
-        else:
-            console.print("[green]✔ Blueprint Validated. Ready to deploy.[/green]")
-
-    except ImportError as e:
-        import sys
-        print(f"Missing dependency: {e}. Run 'pip install rich PyYAML'")
-        print(f"Python Executable: {sys.executable}")
+    except Exception as e:
+        print(f"{RED}Error during merge: {e}{RESET}")
 
 # ==========================================
 # CLI HELPERS
