@@ -1893,6 +1893,7 @@ def run_doctor():
         from rich.console import Console
         from rich.table import Table
         from rich.panel import Panel
+        from rich import box
         console = Console()
 
         console.print("[bold cyan]🩺 Jaavis Doctor[/bold cyan]")
@@ -1947,11 +1948,19 @@ def run_doctor():
         console.print(table)
 
         # Personas Integrity Check
-        console.print("\n[bold]🧠 Persona Integrity[/bold]")
-        p_table = Table(show_header=True, header_style="bold magenta", box=None)
-        p_table.add_column("Persona", style="cyan")
+        # Personas Integrity Check
+
+        p_table = Table(
+            title="[bold cyan]Persona Status Report[/bold cyan]",
+            box=box.ROUNDED,
+            border_style="blue",
+            header_style="bold magenta",
+            expand=True
+        )
+        p_table.add_column("Persona", style="white")
         p_table.add_column("Path", style="dim white")
-        p_table.add_column("Status", style="bold")
+        p_table.add_column("Remote URL", style="dim cyan", overflow="ellipsis")
+        p_table.add_column("Status", justify="center")
 
         config = load_config()
         personas = config.get("personas", {})
@@ -1962,15 +1971,28 @@ def run_doctor():
             path = p_data.get("path", "")
             exists = os.path.exists(path)
 
+            remote_url = "[dim]Local Only[/dim]"
+            if exists and os.path.exists(os.path.join(path, ".git")):
+                try:
+                    res = subprocess.run(["git", "remote", "get-url", "origin"], cwd=path, capture_output=True, text=True)
+                    if res.returncode == 0:
+                        remote_url = res.stdout.strip()
+                    else:
+                        remote_url = "[dim]No Remote[/dim]"
+                except:
+                     remote_url = "[red]Error[/red]"
+            elif not exists:
+                remote_url = "[bold red]MISSING[/bold red]"
+
             if exists:
                 status = "[green]Active[/green]"
             else:
-                status = "[red]Missing[/red]"
+                status = "[bold red]MISSING[/bold red]"
                 results["all_passed"] = False # Fail doctor if brain is missing
 
-            p_table.add_row(name, path, status)
+            p_table.add_row(name, path, remote_url, status)
 
-        console.print(p_table)
+        console.print(Panel(p_table, border_style="cyan", title="[bold]Jaavis Diagnostic[/bold]"))
 
         # Recovery Hint for Missing Personas
         for name, p_data in personas.items():
@@ -2876,7 +2898,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.1.7"
+VERSION = "1.1.8"
 
 # ==========================================
 # MAINTAINER
@@ -2928,7 +2950,7 @@ def main():
     apply_parser.add_argument("--dry-run", action="store_true", help="Preview commands without running")
 
     # Doctor Command
-    subparsers.add_parser("doctor", aliases=["chk"], help="Check system health")
+    subparsers.add_parser("doctor", aliases=["chk", "check"], help="Check system health")
 
     # Sync Command
     subparsers.add_parser("sync", help="Sync skills with remote library")
@@ -3009,7 +3031,7 @@ def main():
             merge_skills()
         elif args.command == "deploy":
             deploy_project()
-        elif args.command in ["doctor", "chk"]:
+        elif args.command in ["doctor", "chk", "check"]:
             run_doctor()
         elif args.command in ["brainstorm", "bs"]:
             run_brainstorm_wizard()
