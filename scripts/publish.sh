@@ -7,78 +7,115 @@ set -e
 echo "🚀 Jaavis Release Protocol"
 echo "--------------------------------"
 
-# 1. Extract Version
-VERSION=$(grep 'VERSION =' jaavis_core.py | cut -d '"' -f 2)
-echo "📦 Current Version: $VERSION"
+# 1. Extract Current Version
+CURRENT_VERSION=$(grep 'VERSION =' jaavis_core.py | cut -d '"' -f 2)
+echo "📦 Current Version: $CURRENT_VERSION"
 
-# 2. Key Confirmation
-read -p "❓ Proceed with release v$VERSION? (y/n) " -n 1 -r
+# 2. Select Bump Type
+echo "Select Release Type:"
+echo "  1) Patch (x.x.+1) - Bug fixes"
+echo "  2) Minor (x.+1.0) - New features"
+echo "  3) Major (+1.0.0) - Breaking changes"
+read -p "Choice (1-3): " -n 1 -r
+echo
+
+IFS='.' read -r -a parts <<< "$CURRENT_VERSION"
+MAJOR=${parts[0]}
+MINOR=${parts[1]}
+PATCH=${parts[2]}
+
+if [[ $REPLY == "1" ]]; then
+    NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+elif [[ $REPLY == "2" ]]; then
+    NEW_VERSION="$MAJOR.$((MINOR + 1)).0"
+elif [[ $REPLY == "3" ]]; then
+    NEW_VERSION="$((MAJOR + 1)).0.0"
+else
+    echo "Invalid choice. Aborting."
+    exit 1
+fi
+
+echo "🎯 Target Version: $NEW_VERSION"
+
+# Safety Check
+# (Simple string comparison sufficient for now as we just constructed it to be larger)
+read -p "❓ Proceed with release v$NEW_VERSION? (y/n) " -n 1 -r
 echo
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     echo "Aborted."
     exit 1
 fi
 
-# 3. Git Check
+# 3. Update jaavis_core.py
+# sed difference for Mac/Linux
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    sed -i '' "s/VERSION = \"$CURRENT_VERSION\"/VERSION = \"$NEW_VERSION\"/" jaavis_core.py
+else
+    sed -i "s/VERSION = \"$CURRENT_VERSION\"/VERSION = \"$NEW_VERSION\"/" jaavis_core.py
+fi
+echo "✅ Updated jaavis_core.py to $NEW_VERSION"
+
+# 4. Git Commit & Tag
 if [[ -n $(git status -s) ]]; then
-    echo "⚠️  Uncommitted changes detected."
-    read -p "❓ Commit all changes as 'Release v$VERSION'? (y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        git add .
-        git commit -m "Release v$VERSION"
-    else
-        echo "Please commit changes first."
-        exit 1
-    fi
+    git add jaavis_core.py
+    git commit -m "Release v$NEW_VERSION"
 fi
 
-# 4. Tag & Push
-echo "🏷️  Tagging v$VERSION..."
-if git rev-parse "v$VERSION" >/dev/null 2>&1; then
-    echo "⚠️  Tag v$VERSION already exists. Overwriting..."
-    git tag -d "v$VERSION"
-    git push origin :refs/tags/v$VERSION
-fi
+echo "🏷️  Tagging v$NEW_VERSION..."
+git tag "v$NEW_VERSION"
 
-git tag "v$VERSION"
 echo "⬆️  Pushing to origin..."
 git push origin main
-git push origin "v$VERSION"
-
+git push origin "v$NEW_VERSION"
 echo "✅ Code released to GitHub."
 
 # 5. Homebrew Update Calculation
 echo "🍺 Calculating SHA256 for Homebrew..."
-URL="https://github.com/ponli550/JaavisCLI/archive/refs/tags/v$VERSION.tar.gz"
-echo "   Downloading $URL..."
-
-# Wait a bit for GitHub to generate tarball
-sleep 2
+URL="https://github.com/ponli550/JaavisCLI/archive/refs/tags/v$NEW_VERSION.tar.gz"
+echo "   Waiting for GitHub to generate tarball..."
+sleep 5
 
 # Download and calc hash
 SHA=$(curl -sL "$URL" | shasum -a 256 | cut -d ' ' -f 1)
+echo "   SHA256: $SHA"
 
-echo "--------------------------------"
-echo "🆕 SHA256: $SHA"
-echo "--------------------------------"
+# 6. Automate Homebrew Tap Update
+TAP_REPO="https://github.com/ponli550/homebrew-jaavis.git"
+TEMP_DIR="/tmp/jaavis-homebrew-release-$(date +%s)"
 
-# 6. Update Formula
-FORMULA_PATH="release_prep/jaavis.rb"
-if [ -f "$FORMULA_PATH" ]; then
-    echo "📝 Updating $FORMULA_PATH..."
-    # Update URL
-    sed -i '' "s|url \".*\"|url \"$URL\"|" "$FORMULA_PATH"
-    # Update SHA
-    sed -i '' "s|sha256 \".*\"|sha256 \"$SHA\"|" "$FORMULA_PATH"
+echo "🍺 Updating Homebrew Tap ($TAP_REPO)..."
+git clone "$TAP_REPO" "$TEMP_DIR"
 
-    echo "✅ Formula updated."
-    echo "👉 You should now commit and push the formula update:"
-    echo "   git add $FORMULA_PATH"
-    echo "   git commit -m \"Update Homebrew formula to v$VERSION\""
-    echo "   git push origin main"
-else
-    echo "❌ Formula not found at $FORMULA_PATH"
+FORMULA_PATH="$TEMP_DIR/Formula/jaavis.rb"
+# If formula is in root, handle that
+if [ ! -f "$FORMULA_PATH" ]; then
+    FORMULA_PATH="$TEMP_DIR/jaavis.rb"
 fi
 
+if [ -f "$FORMULA_PATH" ]; then
+    echo "📝 Updating $FORMULA_PATH..."
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "s|url \".*\"|url \"$URL\"|" "$FORMULA_PATH"
+        sed -i '' "s|sha256 \".*\"|sha256 \"$SHA\"|" "$FORMULA_PATH"
+    else
+        sed -i "s|url \".*\"|url \"$URL\"|" "$FORMULA_PATH"
+        sed -i "s|sha256 \".*\"|sha256 \"$SHA\"|" "$FORMULA_PATH"
+    fi
+
+    # Commit and Push
+    cd "$TEMP_DIR"
+    git config user.email "jaavis-bot@ponli550.com"
+    git config user.name "Jaavis Release Bot"
+    git add .
+    git commit -m "Update jaavis to v$NEW_VERSION"
+    git push origin main
+    cd - > /dev/null
+
+    echo "✅ Homebrew Tap Updated!"
+else
+    echo "❌ Could not find jaavis.rb in cloned tap."
+fi
+
+# Cleanup
+rm -rf "$TEMP_DIR"
 echo "🎉 Release Complete!"

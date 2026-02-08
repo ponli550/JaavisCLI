@@ -89,8 +89,38 @@ def load_config():
     return {}
 
 def save_config(data):
-    with open(CONFIG_PATH, 'w') as f:
-        json.dump(data, f, indent=2)
+    # Secure Save: Ensure file is read/write by owner only (0o600)
+    try:
+        # Prepare file descriptor with atomic exclusive creation if possible, or truncation
+        # os.O_TRUNC | os.O_CREAT | os.O_WRONLY
+        fd = os.open(CONFIG_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as f:
+            json.dump(data, f, indent=2)
+        # Force permissions for existing files
+        os.chmod(CONFIG_PATH, 0o600)
+    except Exception as e:
+        print(f"{RED}Error saving config: {e}{RESET}")
+
+def get_api_key(provider):
+    """Retrieves API Key with priority: 1. Environment Var, 2. Config File"""
+    provider = provider.lower()
+    env_map = {
+        "gemini": "GEMINI_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY"
+    }
+
+    key_name = env_map.get(provider)
+    if not key_name: return None
+
+    # 1. Check Environment
+    if os.environ.get(key_name):
+        return os.environ.get(key_name)
+
+    # 2. Check Config
+    config = load_config()
+    return config.get('env', {}).get(key_name)
+
 
 def get_git_status(path):
     """Returns (last_sync_time, pending_count) tuple"""
@@ -285,7 +315,6 @@ def push_all_personas():
     print(f"\n{MAGENTA}🚀 Jaavis Push Protocol{RESET}")
     choice_idx = interactive_menu("Select Target to Push:", menu_options)
 
-    targets = []
     if choice_idx == 0:
         targets = persona_keys # All
     else:
@@ -344,6 +373,18 @@ def push_all_personas():
                 subprocess.run(["git", "add", "."], cwd=path, check=True, capture_output=True)
                 # Commit (ignore empty)
                 subprocess.run(["git", "commit", "-m", f"Brain Sync: {datetime.now()}"], cwd=path, capture_output=True)
+
+                # Pull (Rebase) - Sync with remote before pushing
+                print(f"    {GREY}Syncing (Rebase)...{RESET}", end="", flush=True)
+                pull_res = subprocess.run(["git", "pull", "origin", "main", "--rebase"], cwd=path, capture_output=True, text=True)
+
+                if pull_res.returncode != 0:
+                     # Check if it was just "no upstream"
+                     if "no tracking information" in pull_res.stderr:
+                         pass # New repo, just push
+                     else:
+                         print(f"\n    {YELLOW}Pull/Rebase encountered issues. Trying to push anyway (might fail)...{RESET}")
+
                 # Push
                 res = subprocess.run(["git", "push", "origin", "main"], cwd=path, capture_output=True, text=True)
                 if res.returncode != 0:
@@ -352,8 +393,23 @@ def push_all_personas():
 
                 if res.returncode == 0:
                     print(f"{GREEN}Synced ✔{RESET}")
+                    # Update config if remote wasn't there
+                    if "remote_url" not in personas[name]:
+                        # Get URL
+                        url = subprocess.check_output(["git", "remote", "get-url", "origin"], cwd=path).decode().strip()
+                        personas[name]["remote_url"] = url
+                        config_changed = True
                 else:
                     print(f"{RED}Push Failed.{RESET}")
+                    # Prompt to Change Remote?
+                    if input(f"    {CYAN}? Push Failed. Change Remote URL? (y/N): {RESET}").strip().lower() == 'y':
+                        new_url = input(f"    {CYAN}? New URL: {RESET}").strip()
+                        if new_url:
+                            subprocess.run(["git", "remote", "set-url", "origin", new_url], cwd=path, check=True)
+                            personas[name]["remote_url"] = new_url
+                            config_changed = True
+                            print(f"    {GREEN}Remote Updated. Try pushing again.{RESET}")
+
             except Exception as e:
                  print(f"{RED}Error: {e}{RESET}")
         else:
@@ -370,25 +426,33 @@ def push_all_personas():
 # ==========================================
 
 def check_api_keys():
-    """Ensures API keys are present in config."""
+    """Ensures API keys are present (Env or Config)."""
+    # We only need to load config if we plan to save to it
     config = load_config()
     if 'env' not in config: config['env'] = {}
 
-    providers = ['GEMINI_API_KEY', 'OPENAI_API_KEY', 'DEEPSEEK_API_KEY']
+    providers = ['gemini', 'openai', 'deepseek'] # Lowercase for get_api_key
     changed = False
 
     print(f"\n{MAGENTA}🔑 AI Configuration {RESET}")
     for p in providers:
-        if p not in config['env'] or not config['env'][p]:
-            print(f"{YELLOW}  • {p} not found.{RESET}")
-            val = input(f"    Enter key (or leave blank to skip): ").strip()
+        key_val = get_api_key(p)
+        status = f"{GREEN}Found (Env/Config){RESET}" if key_val else f"{RED}Missing{RESET}"
+
+        # Display Status
+        print(f"  • {p.capitalize()}: {status}")
+
+        if not key_val:
+            val = input(f"    {CYAN}Enter {p.capitalize()} Key (or leave blank to skip): {RESET}").strip()
             if val:
-                config['env'][p] = val
+                # Save to config (Securely)
+                env_key = f"{p.upper()}_API_KEY"
+                config['env'][env_key] = val
                 changed = True
 
     if changed:
         save_config(config)
-        print(f"{GREEN}Keys saved securely.{RESET}")
+        print(f"{GREEN}Keys saved securely (0o600).{RESET}")
     else:
         print(f"{GREY}Configuration checks out.{RESET}")
 
@@ -476,7 +540,14 @@ def run_brainstorm_wizard():
 
     # 3. Check Keys if Cloud
     if selected_provider != "local":
-        check_api_keys()
+        # Check if key is available via Env or Config
+        if not get_api_key(selected_provider):
+             print(f"{YELLOW}⚠️  Key for {selected_provider} not found in Env or Config.{RESET}")
+             check_api_keys() # Trigger setup
+             if not get_api_key(selected_provider):
+                 print(f"{RED}Aborted. No key provided.{RESET}")
+                 return
+
 
     # 4. Execute
     brainstorm_skill(target_file, selected_provider)
@@ -1265,8 +1336,36 @@ def harvest_skill(doc_path=None):
     # Template might still be in default or dynamic?
     # For now assume template is in default
     if not os.path.exists(TEMPLATE_PATH):
-        print(f"{RED}Error: TEMPLATE_SKILL.md not found at {TEMPLATE_PATH}!{RESET}")
-        return
+        # Auto-create Default Template
+        print(f"{YELLOW}⚠️  Template not found. Creating default at {TEMPLATE_PATH}...{RESET}")
+        try:
+            os.makedirs(os.path.dirname(TEMPLATE_PATH), exist_ok=True)
+            with open(TEMPLATE_PATH, 'w') as f:
+                f.write("""---
+tags: [tag1, tag2]
+grade: [Grade]
+---
+
+# [Skill Name]
+
+> [Description]
+
+## Pros
+[Pros List]
+
+## Cons
+[Cons List]
+
+## Implementation
+<!-- JAAVIS:EXEC -->
+```bash
+(Paste your code snippet here)
+```
+""")
+            print(f"{GREEN}✔ Default template created.{RESET}")
+        except Exception as e:
+            print(f"{RED}Error creating template: {e}{RESET}")
+            return
 
     # 1. Interactive Inputs
     try:
@@ -2777,7 +2876,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.1.6"
+VERSION = "1.1.7"
 
 # ==========================================
 # MAINTAINER
