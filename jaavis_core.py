@@ -92,7 +92,234 @@ def save_config(data):
     with open(CONFIG_PATH, 'w') as f:
         json.dump(data, f, indent=2)
 
+def get_git_status(path):
+    """Returns (last_sync_time, pending_count) tuple"""
+    if not os.path.exists(os.path.join(path, ".git")):
+        return None, 0
+
+    try:
+        # Get uncommitted changes count
+        pending = subprocess.check_output(f"git -C {path} status --porcelain | wc -l", shell=True).decode().strip()
+        pending = int(pending) if pending else 0
+
+        # Get last commit relative time
+        last_sync = subprocess.check_output(f"git -C {path} log -1 --format='%cr'", shell=True).decode().strip()
+
+        return last_sync, pending
+    except:
+        return None, 0
+
+def open_brain_vscode():
+    """Opens the entire Jaavis Brain (~/.jaavis) in VS Code"""
+    if not os.path.exists(JAAVIS_HOME):
+        os.makedirs(JAAVIS_HOME, exist_ok=True)
+
+    print(f"📂 Opening JAAVIS Brain at {JAAVIS_HOME}...")
+
+    # Try VS Code first
+    if shutil.which('code'):
+        subprocess.call(['code', JAAVIS_HOME])
+    elif sys.platform == 'darwin':
+        subprocess.call(['open', JAAVIS_HOME])
+    else:
+        print(f"{RED}VS Code ('code') not found in PATH.{RESET}")
+
+def sync_all_personas():
+    """Smart Sync: Pulls updates or Clones missing brains."""
+    config = load_config()
+    personas = config.get("personas", {})
+    if "programmer" not in personas: personas["programmer"] = {"path": DEFAULT_LIBRARY_PATH}
+
+    print(f"\n{MAGENTA}🔄 Smart Sync & Recovery Protocol...{RESET}")
+
+    for name, p_data in personas.items():
+        path = p_data.get("path")
+        remote_url = p_data.get("remote_url")
+
+        print(f"  {CYAN}• {name.capitalize()}:{RESET} ", end="", flush=True)
+
+        if os.path.exists(path):
+            if os.path.exists(os.path.join(path, ".git")):
+                # Exists + Git = Pull
+                try:
+                    res = subprocess.run(["git", "pull"], cwd=path, capture_output=True, text=True)
+                    if res.returncode == 0:
+                         print(f"{GREEN}Updated (Pull) ✔{RESET}")
+                    else:
+                         print(f"{YELLOW}Merge/Conflict? (Check manually){RESET}")
+                except Exception as e:
+                    print(f"{RED}Error: {e}{RESET}")
+            else:
+                 print(f"{YELLOW}Exists but not Git-linked.{RESET}")
+        elif remote_url:
+            # Missing + Remote = Clone (Recovery)
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                res = subprocess.run(["git", "clone", remote_url, path], capture_output=True, text=True)
+                if res.returncode == 0:
+                    print(f"{GREEN}Recovered (Clone) ☁️ -> 💾{RESET}")
+                else:
+                    print(f"{RED}Clone Failed: {res.stderr}{RESET}")
+            except Exception as e:
+                print(f"{RED}Error: {e}{RESET}")
+        else:
+             print(f"{RED}Cannot Sync (Missing & No Remote){RESET}")
+
+    print(f"\n{GREEN}Sync Complete.{RESET}")
+    time.sleep(2)
+
+
+def push_all_personas():
+    """Iterates through all personas and pushes changes"""
+    config = load_config()
+    personas = config.get("personas", {})
+    if "programmer" not in personas: personas["programmer"] = {"path": DEFAULT_LIBRARY_PATH}
+
+    print(f"\n{MAGENTA}🚀 Pushing All Brains to Cloud...{RESET}")
+
+    for name, p_data in personas.items():
+        path = p_data.get("path")
+        if not path or not os.path.exists(path): continue
+
+        if os.path.exists(os.path.join(path, ".git")):
+            print(f"  {CYAN}• {name.capitalize()}:{RESET} ", end="", flush=True)
+            try:
+                # Add
+                subprocess.run(["git", "add", "."], cwd=path, check=True, capture_output=True)
+                # Commit (ignore empty)
+                subprocess.run(["git", "commit", "-m", f"Brain Sync: {datetime.now()}"], cwd=path, capture_output=True)
+                # Push
+                res = subprocess.run(["git", "push"], cwd=path, capture_output=True, text=True)
+                if res.returncode == 0:
+                    print(f"{GREEN}Synced ✔{RESET}")
+                else:
+                    print(f"{RED}Failed (Check remote){RESET}")
+            except Exception as e:
+                 print(f"{RED}Error: {e}{RESET}")
+        else:
+             print(f"  {GREY}• {name.capitalize()}: Not linked (Skipping){RESET}")
+
+    print(f"\n{GREEN}Done.{RESET}")
+    time.sleep(2)
+
+# ==========================================
+# BRAINSTORMING (AI) LOGIC
+# ==========================================
+
+def check_api_keys():
+    """Ensures API keys are present in config."""
+    config = load_config()
+    if 'env' not in config: config['env'] = {}
+
+    providers = ['GEMINI_API_KEY', 'OPENAI_API_KEY', 'DEEPSEEK_API_KEY']
+    changed = False
+
+    print(f"\n{MAGENTA}🔑 AI Configuration {RESET}")
+    for p in providers:
+        if p not in config['env'] or not config['env'][p]:
+            print(f"{YELLOW}  • {p} not found.{RESET}")
+            val = input(f"    Enter key (or leave blank to skip): ").strip()
+            if val:
+                config['env'][p] = val
+                changed = True
+
+    if changed:
+        save_config(config)
+        print(f"{GREEN}Keys saved securely.{RESET}")
+    else:
+        print(f"{GREY}Configuration checks out.{RESET}")
+
+def get_brainstorm_prompt(context_type="skill"):
+    """Returns the 2026 Fortress Standard Prompt."""
+    return """
+You are the **Jaavis Architect Bot**. Your goal is to **refactor** the provided code into a 2026 "Fortress" Standard skill.
+
+### Core Constraints:
+1.  **Idempotency**: Ensure `mkdir`, `cd`, and `cat` operations don't fail if they've already run.
+2.  **Pre-flight Checks**: Add logic to verify dependencies (e.g., `command -v kubectl`) before executing.
+3.  **Observability**: Use emojis and clear `echo` statements for every major step.
+4.  **Modern Patterns**: Use `[[ ]]` for shell tests and ensure all variables are quoted to handle spaces.
+5.  **Harvest-Ready**: Maintain the `<!-- JAAVIS:EXEC -->` anchor and the Markdown structure.
+
+### Output Format:
+Return **only** the improved Markdown content. Do not include conversational filler.
+"""
+
+def call_llm_api(provider, system_prompt, user_content):
+    """Generic LLM Caller (Placeholder for now, supports Local Dump)."""
+    # In a real implementation, valid `requests` or `urllib` calls would go here.
+    # For now, we simulate the "Local" dump which is the fallback.
+    return None
+
+def brainstorm_skill(target_path, provider="local"):
+    """Executes the brainstorming session."""
+
+    # 1. Read Target Context
+    if not os.path.exists(target_path):
+        print(f"{RED}Error: Target {target_path} not found.{RESET}")
+        return
+
+    with open(target_path, 'r') as f:
+        content = f.read()
+
+    # 2. Prepare Prompt
+    system_prompt = get_brainstorm_prompt()
+    full_request = f"{system_prompt}\n\n--- TARGET CONTEXT ---\n{content}"
+
+    # 3. Execute
+    if provider == "local":
+        out_file = target_path + ".prompt.txt"
+        with open(out_file, 'w') as f:
+            f.write(full_request)
+        print(f"\n{GREEN}📝 Brainstorm Context generated:{RESET} {out_file}")
+        print(f"{GREY}Copy this content into Gemini/ChatGPT/DeepSeek to get your refactor.{RESET}")
+
+        # Auto-open
+        if shutil.which('code'):
+            subprocess.call(['code', out_file])
+        elif sys.platform == 'darwin':
+            subprocess.call(['open', out_file])
+
+    elif provider in ["gemini", "openai", "deepseek"]:
+        print(f"{YELLOW}📡 Connecting to {provider.upper()} (Simulation)...{RESET}")
+        # Placeholder for actual API call
+        print(f"{RED}API Integration not yet fully hydrated. Switching to Local Dump.{RESET}")
+        brainstorm_skill(target_path, "local")
+
+def run_brainstorm_wizard():
+    """Interactive Wizard for Jaavis Brainstorm."""
+    print(f"\n{MAGENTA}🧠 Jaavis Brainstorm (AI Refactor){RESET}")
+
+    # 1. Select Target (Simple: Current Directory's files)
+    files = [f for f in os.listdir('.') if f.endswith('.md') or f.endswith('.py') or f.endswith('.sh')]
+    if not files:
+        print(f"{RED}No suitable files found in current directory.{RESET}")
+        return
+
+    print(f"\n{CYAN}Select Target to Refactor:{RESET}")
+    menu_options = files + ["Cancel"]
+    choice = interactive_menu("Make a choice:", menu_options)
+
+    if choice == len(menu_options) - 1: return
+    target_file = files[choice]
+
+    # 2. Select Provider
+    print(f"\n{CYAN}Select Intelligence Engine:{RESET}")
+    providers = ["Local (Generate Prompt File)", "Gemini", "OpenAI", "DeepSeek"]
+    p_choice = interactive_menu("Choose Provider:", providers)
+
+    p_map = {0: "local", 1: "gemini", 2: "openai", 3: "deepseek"}
+    selected_provider = p_map[p_choice]
+
+    # 3. Check Keys if Cloud
+    if selected_provider != "local":
+        check_api_keys()
+
+    # 4. Execute
+    brainstorm_skill(target_file, selected_provider)
+
 def get_key():
+
     """Captures a single keypress, handling arrow key escape sequences."""
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
@@ -107,44 +334,40 @@ def get_key():
     if ch == '\x03': raise KeyboardInterrupt
     return ch
 
-def interactive_menu(title, options, default_index=0):
-    """Render a menu that can be navigated with arrow keys."""
-    selected_index = default_index
-    num_options = len(options)
-
-    # Initial Print
-    print(f"\n{MAGENTA}{title}{RESET}")
-    for i in range(num_options):
-        print("") # Placeholder lines to overwrite
+def interactive_menu(prompt, options, default_index=0, return_char=False):
+    """Renders an interactive menu handling arrow keys. Supports shortcuts."""
+    current_row = default_index
 
     while True:
-        # Move cursor back up to start of options (num_options lines + extra spacing)
-        # Using ANSI escape: \033[A moves up one line.
-        for _ in range(num_options):
-            sys.stdout.write('\033[A')
+        os.system('cls' if os.name == 'nt' else 'clear')
+        print(f"\n{CYAN}{prompt}{RESET}")
+        print("-----------------------------------------------------")
 
-        # Re-render options
-        for i, option in enumerate(options):
-            prefix = f"{CYAN}▶ {RESET}" if i == selected_index else "  "
-            color = CYAN if i == selected_index else WHITE
-            # Clear current line then print
-            sys.stdout.write('\033[K')
-            print(f"{prefix}{color}{option}{RESET}")
+        for idx, option in enumerate(options):
+            if idx == current_row:
+                print(f"{GREEN}> {option}{RESET}")
+            else:
+                print(f"  {option}")
 
-        # Capture key
-        try:
-            key = get_key()
-        except KeyboardInterrupt:
-            print(f"\n{RED}Aborted.{RESET}")
-            sys.exit(0)
+        print("-----------------------------------------------------")
+        print(f"{GREY}Use UP/DOWN arrows to navigate, ENTER to select.{RESET}")
+        if return_char:
+             print(f"{GREY}[C] Code | [P] Push Brain{RESET}")
 
-        if key == '\x1b[A': # Up
-            selected_index = (selected_index - 1) % num_options
-        elif key == '\x1b[B': # Down
-            selected_index = (selected_index + 1) % num_options
-        elif key in ['\r', '\n']: # Enter
-            return selected_index
+        key = get_key()
 
+        if key == '\x1b[A': # UP
+            if current_row > 0:
+                current_row -= 1
+        elif key == '\x1b[B': # DOWN
+            if current_row < len(options) - 1:
+                current_row += 1
+        elif key == '\r': # ENTER
+            return (current_row, None) if return_char else current_row
+
+        # Handle Shortcuts
+        if return_char and key.lower() in ['c', 'p']:
+            return (current_row, key.lower())
 
 def get_active_library_path():
     config = load_config()
@@ -195,33 +418,60 @@ def select_persona():
     current = config.get("current_persona", "programmer")
 
     print(f"{WHITE}Hi I'm Jaavis, your personal assistant.{RESET}\n")
+    print(f"{GREY}Current Brain: {JAAVIS_HOME}{RESET}\n")
 
-    # 1. Build Options
-    menu_options = ["Programmer (One-Army Protocol as a default)"]
-
-    # Ensure defaults exist in config for listing
+    # 1. Build Options with Status
+    # Ensure defaults exist in config
     if "personas" not in config: config["personas"] = {}
     if "programmer" not in config["personas"]: config["personas"]["programmer"] = {"path": DEFAULT_LIBRARY_PATH}
 
-    dynamic_personas = sorted([k for k in config["personas"].keys() if k != "programmer"])
+    persona_keys = ["programmer"] + sorted([k for k in config["personas"].keys() if k != "programmer"])
+    menu_options = []
 
-    for p in dynamic_personas:
-        lock_status = " 🔒" if config["personas"].get(p, {}).get("locked") else ""
-        menu_options.append(f"{p.capitalize()}{lock_status}")
+    for p in persona_keys:
+        p_data = config["personas"].get(p, {})
+        p_path = p_data.get("path", DEFAULT_LIBRARY_PATH)
+        lock_status = " 🔒" if p_data.get("locked") else ""
 
+        # Get Git Status
+        last_sync, pending = get_git_status(p_path)
+
+        display_name = p.capitalize()
+        if p == "programmer": display_name += " (One-Army Protocol)"
+
+        option_str = f"{display_name}{lock_status}"
+        if last_sync:
+             status_icon = "✅" if pending == 0 else "🛠️"
+             option_str += f"\n    ↳ {GREY}Last Sync: {last_sync} | Pending: {pending} {status_icon}{RESET}"
+
+        menu_options.append(option_str)
+
+    # 2. Add Shortcuts
     menu_options.append("Manage Personas")
 
-    # 2. Determine Default Index
-    persona_keys = ["programmer"] + dynamic_personas
+    # 3. Determine Default Index
     default_idx = 0
     if current in persona_keys:
         default_idx = persona_keys.index(current)
 
-    # 3. Show Interactive Menu
+    # 4. Show Interactive Menu with Shortcuts Handler
     prompt_text = f"Who is operating right now? (Current: {current.upper()})"
-    choice_idx = interactive_menu(prompt_text, menu_options, default_index=default_idx)
 
-    # 4. Map Choice to Persona
+    # Custom loop to handle shortcuts 'C' and 'P'
+    while True:
+        choice_idx, char_code = interactive_menu(prompt_text, menu_options, default_index=default_idx, return_char=True)
+
+        if char_code in ['c', 'C']:
+             open_brain_vscode()
+             continue # Refresh menu
+        elif char_code in ['p', 'P']:
+             push_all_personas()
+             input("Press Enter to continue...")
+             continue # Refresh menu
+        else:
+             break # Selection made
+
+    # 5. Map Choice to Persona
     manage_index = len(menu_options) - 1
 
     if choice_idx == manage_index:
@@ -301,7 +551,14 @@ def add_persona():
         return
 
     lib_dir = f"library_{name}"
-    lib_path = os.path.join(BASE_DIR, lib_dir)
+    # FIX: Use Persistent Home instead of BASE_DIR
+    lib_path = os.path.join(JAAVIS_HOME, lib_dir)
+
+    if not os.path.exists(lib_path):
+        os.makedirs(lib_path, exist_ok=True)
+        # Create subfolders
+        os.makedirs(os.path.join(lib_path, "skills"), exist_ok=True)
+        os.makedirs(os.path.join(lib_path, "scripts"), exist_ok=True)
 
     config["personas"][name] = {
         "path": lib_path,
@@ -310,8 +567,55 @@ def add_persona():
     }
 
     save_config(config)
-    print(f"{GREEN}✔ Persona '{name}' added!{RESET}")
+    print(f"{GREEN}✔ Persona '{name}' added at {lib_path}!{RESET}")
     time.sleep(1)
+
+def migrate_persona_libraries():
+    """Auto-migrates persona libraries from Cellar (volatile) to ~/.jaavis (persistent)"""
+    config = load_config()
+    if "personas" not in config: return
+
+    migrated = False
+
+    for name, persona in config['personas'].items():
+        if name == 'programmer': continue # handled by get_default_library_path
+
+        old_path = persona.get('path', '')
+
+        # Detect if the library is in the dangerous 'Cellar' or 'brew' path
+        # Or if it starts with BASE_DIR which might be the cellar
+        is_volatile = "Cellar/jaavis" in old_path or (BASE_DIR in old_path and JAAVIS_HOME not in old_path)
+
+        if is_volatile:
+            new_path = os.path.join(JAAVIS_HOME, f"library_{name}")
+
+            # If path changed, we need to migrate
+            if os.path.abspath(old_path) != os.path.abspath(new_path):
+                print(f"{YELLOW}📦 Migrating persona '{name}' to persistent storage...{RESET}")
+
+                if os.path.exists(old_path):
+                    if not os.path.exists(new_path):
+                        try:
+                            shutil.copytree(old_path, new_path)
+                            print(f"{GREEN}✔ Data moved to {new_path}{RESET}")
+                        except Exception as e:
+                            print(f"{RED}Failed to move data: {e}{RESET}")
+                            continue # Don't update config if copy failed
+                    else:
+                         print(f"{GREY}Target {new_path} already exists. Updating config pointer.{RESET}")
+                else:
+                    print(f"{RED}⚠️  Warning: '{name}' library path was lost/missing. Pointing to new location.{RESET}")
+                    if not os.path.exists(new_path):
+                        os.makedirs(new_path, exist_ok=True)
+                        os.makedirs(os.path.join(new_path, "skills"), exist_ok=True)
+
+                persona['path'] = new_path
+                migrated = True
+
+    if migrated:
+        save_config(config)
+        print(f"{GREEN}✔ Migration complete. All personas secured in {JAAVIS_HOME}{RESET}\n")
+
 
 def rename_persona():
     config = load_config()
@@ -354,14 +658,27 @@ def rename_persona():
     # Rename directory if it matches library_{old_name}
     old_path = config["personas"][old_name]["path"]
     new_lib_dir = f"library_{new_name}"
-    new_path = os.path.join(BASE_DIR, new_lib_dir)
+    # FIX: Use Persistent Home
+    new_path = os.path.join(JAAVIS_HOME, new_lib_dir)
 
-    if old_path == os.path.join(BASE_DIR, f"library_{old_name}"):
+    # Check if old path was the standard naming convention in either location
+    # We check both to be safe during transition
+    standard_old_base = os.path.join(BASE_DIR, f"library_{old_name}")
+    standard_old_home = os.path.join(JAAVIS_HOME, f"library_{old_name}")
+
+    if old_path == standard_old_base or old_path == standard_old_home:
         if os.path.exists(old_path):
+            # If target exists, fail
+            if os.path.exists(new_path):
+                 print(f"{RED}Error: Target path {new_path} already exists.{RESET}")
+                 return
+
             os.rename(old_path, new_path)
+
         config["personas"][new_name] = config["personas"].pop(old_name)
         config["personas"][new_name]["path"] = new_path
     else:
+        # Custom path? Just rename key, don't move folder
         config["personas"][new_name] = config["personas"].pop(old_name)
 
     save_config(config)
@@ -687,41 +1004,96 @@ def delete_skill(name_query):
     else:
         print(f"{RED}Skill '{name_query}' not found.{RESET}")
 
+def get_skill_metadata(file_path):
+    """Extracts title and metadata from a skill file (YAML frontmatter)."""
+    if not os.path.exists(file_path): return None
+    try:
+        with open(file_path, 'r') as f:
+            content = f.read()
+            # Regex to pull the title from the metadata header (GitHub formatted)
+            match = re.search(r'^title:\s*(.*)$', content, re.MULTILINE)
+            return match.group(1).strip() if match else None
+    except:
+        return None
+
+def backup_skill(file_path):
+    """Atomic Backup: Moves file to ~/.jaavis/backups/"""
+    if not os.path.exists(file_path): return
+
+    backup_dir = os.path.join(JAAVIS_HOME, "backups")
+    if not os.path.exists(backup_dir):
+        os.makedirs(backup_dir)
+
+    filename = os.path.basename(file_path)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = os.path.join(backup_dir, f"{filename}.{timestamp}.bak")
+
+    shutil.copy2(file_path, backup_path)
+    return backup_path
+
 def harvest_skill(doc_path=None):
     lib_path = get_active_library_path()
     print(f"{MAGENTA}🌾 Jaavis Harvest Protocol ({get_current_persona_name()}){RESET}")
     print("-----------------------------------------------------")
 
-    # Smart Harvest: Pre-fill from doc
+    # Smart Harvest: Pre-fill from doc OR Draft Overwrite
     defaults = {}
-    if doc_path:
-        # Check if file exists locally
-        if not os.path.exists(doc_path):
-             # Try to find it in the library (Exact + Fuzzy)
-             found_in_lib = None
+    draft_mode = False
+    existing_skill_path = None
 
-             # 1. Exact Match
-             for root, dirs, files in os.walk(lib_path):
-                 if doc_path in files:
-                     found_in_lib = os.path.join(root, doc_path)
-                     break
+    if doc_path and os.path.exists(doc_path):
+        # Check if this is a Jaavis Draft (Metadata check)
+        draft_title = get_skill_metadata(doc_path)
 
-             # 2. Fuzzy Match (if exact failed)
-             if not found_in_lib:
-                 for root, dirs, files in os.walk(lib_path):
-                     for f in files:
-                         if doc_path.lower() in f.lower() and f.endswith(".md"):
-                              found_in_lib = os.path.join(root, f)
-                              break
-                     if found_in_lib: break
+        if draft_title:
+            print(f"{CYAN}📜 Detected Draft Skill: '{draft_title}'{RESET}")
+            # Try to find the ORIGINAL skill to overwrite
+            for root, dirs, files in os.walk(lib_path):
+                for f in files:
+                    # Match by Title via metadata read? Too slow.
+                    # Match by filename match (draft is usually name.bs.md or just name.md)
+                    # Let's rely on User Confirmation or filename heuristic
 
-             if found_in_lib:
-                 doc_path = found_in_lib
-                 print(f"[dim]Found in library: {doc_path}[/dim]")
+                    # Heuristic: If doc_path is "deploy_react.bs.md", look for "deploy_react.md"
+                    clean_name = os.path.basename(doc_path).replace(".bs.md", ".md")
+                    if f == clean_name:
+                        existing_skill_path = os.path.join(root, f)
+                        break
+                if existing_skill_path: break
 
+            if existing_skill_path:
+                print(f"{YELLOW}⚠️  Found existing skill: {existing_skill_path}{RESET}")
+
+                # Show Diff
+                print(f"\n{BOLD}Diff Preview:{RESET}")
+                try:
+                    subprocess.run(["diff", "--color", "-u", existing_skill_path, doc_path])
+                except Exception:
+                    print(" (diff command failed, showing raw paths)")
+
+                confirm = input(f"\n{RED}Overwrite '{os.path.basename(existing_skill_path)}' with this draft? (y/N): {RESET}").strip().lower()
+
+                if confirm == 'y':
+                    # Atomic Swap
+                    backup = backup_skill(existing_skill_path)
+                    print(f"{GREY}📦 Backup saved to {backup}{RESET}")
+
+                    shutil.copy2(doc_path, existing_skill_path)
+                    print(f"{GREEN}✔ Skill updated successfully!{RESET}")
+
+                    # Optional: Delete draft?
+                    rm_draft = input(f"{GREY}Delete draft file? (y/N): {RESET}").strip().lower()
+                    if rm_draft == 'y':
+                        os.remove(doc_path)
+                        print(f"{GREY}Draft deleted.{RESET}")
+                    return
+                else:
+                    print("Overwrite cancelled. Proceeding to normal harvest...")
+
+        # If not draft overwrite, parse as doc
         print(f"[bold cyan]📄 Parsing documentation: {doc_path}...[/bold cyan]")
         parsed = parse_markdown_doc(doc_path)
-        if parsed:
+        if parsed and parsed.get("name"):
             defaults = parsed
             print(f"  [green]✔ Found:[/green] {defaults.get('name')} | {defaults.get('description')}")
         else:
@@ -803,19 +1175,6 @@ def harvest_skill(doc_path=None):
 
         new_content = new_content.replace("[Pros List]", pros_list)
         new_content = new_content.replace("[Cons List]", cons_list)
-
-        # Deployment Skills: Auto-Inject Execution Tag & Language
-        if is_deploy:
-            # Replace standard code block with Executable Block
-            # Attempts to match common template format
-            replacements = [
-                ("```\n(Paste your code snippet here)", "<!-- JAAVIS:EXEC -->\n```bash\n(Paste your code snippet here)"),
-                ("```\r\n(Paste your code snippet here)", "<!-- JAAVIS:EXEC -->\n```bash\n(Paste your code snippet here)")
-            ]
-            for old, new in replacements:
-                if old in new_content:
-                    new_content = new_content.replace(old, new)
-                    break
 
 
         snippet = defaults.get("snippet", "")
@@ -1324,6 +1683,40 @@ def run_doctor():
             msg = f"[dim]Linked[/dim]" if passed else "[yellow]Not Linked[/yellow]"
             table.add_row(f"  {integ}", f"{icon}  {msg}")
         console.print(table)
+
+        # Personas Integrity Check
+        console.print("\n[bold]🧠 Persona Integrity[/bold]")
+        p_table = Table(show_header=True, header_style="bold magenta", box=None)
+        p_table.add_column("Persona", style="cyan")
+        p_table.add_column("Path", style="dim white")
+        p_table.add_column("Status", style="bold")
+
+        config = load_config()
+        personas = config.get("personas", {})
+        if "programmer" not in personas:
+             personas["programmer"] = {"path": DEFAULT_LIBRARY_PATH}
+
+        for name, p_data in personas.items():
+            path = p_data.get("path", "")
+            exists = os.path.exists(path)
+
+            if exists:
+                status = "[green]Active[/green]"
+            else:
+                status = "[red]Missing[/red]"
+                results["all_passed"] = False # Fail doctor if brain is missing
+
+            p_table.add_row(name, path, status)
+
+        console.print(p_table)
+
+        # Recovery Hint for Missing Personas
+        for name, p_data in personas.items():
+            path = p_data.get("path", "")
+            if not os.path.exists(path):
+                 console.print(f"\n[red]⚠️  Critical: Persona '{name}' is missing its library at {path}[/red]")
+                 console.print(f"   [yellow]→ If you have a backup/remote, run:[/yellow] git clone <url> {path}")
+                 console.print(f"   [yellow]→ Or run:[/yellow] jaavis sync (if remote was configured)")
 
         if not results["all_passed"]:
              console.print("\n[yellow]⚠️  Issues detected. Run 'jaavis init' or install missing tools.[/yellow]")
@@ -2210,6 +2603,7 @@ def print_help():
         table.add_row("persona", "p", "Switch Persona")
         table.add_row("sync", "", "Update Skill Library (Git Sync)")
         table.add_row("push", "", "Upload Local Changes (Git Push)")
+        table.add_row("brainstorm", "bs", "AI Refactor & Optimization")
         table.add_row("merge", "", "Create a Blueprint (Frontend + Backend)")
         table.add_row("init", "", "Scaffold new project structure")
         table.add_row("help", "", "Show this help screen")
@@ -2220,7 +2614,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 
 # ==========================================
 # MAINTAINER
@@ -2234,6 +2628,7 @@ def main():
 
     harvest_parser = subparsers.add_parser("harvest", aliases=["new"], help="Interactive skill extraction wizard")
     harvest_parser.add_argument("--doc", help="Path to documentation file to auto-harvest from")
+    harvest_parser.add_argument("doc_flag", nargs='?', help="Positional path to doc (optional)")
 
     # Search Command
     search_parser = subparsers.add_parser("search", help="Search skills by content")
@@ -2246,6 +2641,9 @@ def main():
     # Delete Command
     delete_parser = subparsers.add_parser("delete", aliases=["rm"], help="Delete a skill")
     delete_parser.add_argument("name", help="Name of the skill to delete")
+
+    # Code Command (New)
+    subparsers.add_parser("code", help="Open Jaavis Brain in VS Code")
 
     # Manage Command (TUI)
     subparsers.add_parser("manage", aliases=["tui"], help="Interactive TUI Manager")
@@ -2276,6 +2674,9 @@ def main():
     # Push Command
     subparsers.add_parser("push", help="Push skills to remote library")
 
+    # Brainstorm Command
+    subparsers.add_parser("brainstorm", aliases=["bs"], help="AI Refactor & Optimization")
+
     # Help Command
     subparsers.add_parser("help", help="Show help message")
 
@@ -2293,6 +2694,7 @@ def main():
 
             # This enforces the flow: Users see who they are before entering.
             check_for_skill_updates()
+            migrate_persona_libraries() # Ensure legacy paths are fixed
             select_persona()
             return
 
@@ -2329,6 +2731,8 @@ def main():
             search_skills(args.query)
         elif args.command == "open":
             open_skill(args.name)
+        elif args.command == "code":
+            open_brain_vscode()
         elif args.command in ["delete", "rm"]:
             delete_skill(args.name)
         elif args.command in ["manage", "tui"]:
@@ -2345,10 +2749,12 @@ def main():
             deploy_project()
         elif args.command in ["doctor", "chk"]:
             run_doctor()
+        elif args.command in ["brainstorm", "bs"]:
+            run_brainstorm_wizard()
         elif args.command == "sync":
-            sync_skills()
+            sync_all_personas()
         elif args.command == "push":
-            push_library()
+            push_all_personas()
         elif args.command == "apply":
             apply_skill(args.name, args.dry_run)
         elif args.command == "help":
