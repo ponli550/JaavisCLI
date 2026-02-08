@@ -186,9 +186,22 @@ def sync_all_personas():
                 for cmd in commands:
                     res = subprocess.run(cmd, cwd=path, capture_output=True, text=True)
                     if res.returncode != 0:
-                        print(f"\n    {RED}❌ Error during '{cmd[1]}':{RESET} {res.stderr.strip()}")
-                        success = False
-                        break
+                        # Fallback: If pull failed, maybe upstream isn't set?
+                        if "pull" in cmd and "no tracking information" in res.stderr:
+                             try:
+                                 current_branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=path).decode().strip()
+                             except:
+                                 current_branch = "main"
+
+                             print(f"{YELLOW} Setting upstream to origin/{current_branch}...{RESET}")
+                             subprocess.run(["git", "branch", "--set-upstream-to", f"origin/{current_branch}", current_branch], cwd=path, capture_output=True)
+                             # Retry pull
+                             res = subprocess.run(cmd, cwd=path, capture_output=True, text=True)
+
+                        if res.returncode != 0:
+                            print(f"\n    {RED}❌ Error during '{cmd[1]}':{RESET} {res.stderr.strip()}")
+                            success = False
+                            break
 
                 if success:
                     print(f"{GREEN}Updated ✔{RESET}")
@@ -2764,7 +2777,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.1.5"
+VERSION = "1.1.6"
 
 # ==========================================
 # MAINTAINER
