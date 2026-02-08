@@ -125,12 +125,13 @@ def open_brain_vscode():
         print(f"{RED}VS Code ('code') not found in PATH.{RESET}")
 
 def sync_all_personas():
-    """Smart Sync: Pulls updates or Clones missing brains."""
+    """Smart Sync: Pulls updates or Clones missing brains. Interactively fixes missing remotes."""
     config = load_config()
     personas = config.get("personas", {})
     if "programmer" not in personas: personas["programmer"] = {"path": DEFAULT_LIBRARY_PATH}
 
     print(f"\n{MAGENTA}🔄 Smart Sync & Recovery Protocol...{RESET}")
+    config_changed = False
 
     for name, p_data in personas.items():
         path = p_data.get("path")
@@ -150,7 +151,28 @@ def sync_all_personas():
                 except Exception as e:
                     print(f"{RED}Error: {e}{RESET}")
             else:
+                 # Exists but not Git-linked: Prompt to link?
                  print(f"{YELLOW}Exists but not Git-linked.{RESET}")
+                 ask_link = input(f"    {CYAN}? Initialize and link to remote? (y/N): {RESET}").strip().lower()
+                 if ask_link == 'y':
+                     new_remote = input(f"    {CYAN}? Remote Git URL: {RESET}").strip()
+                     if new_remote:
+                         try:
+                             subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
+                             subprocess.run(["git", "branch", "-M", "main"], cwd=path, check=True, capture_output=True)
+                             subprocess.run(["git", "remote", "add", "origin", new_remote], cwd=path, check=True, capture_output=True)
+
+                             # Save to config
+                             p_data["remote_url"] = new_remote
+                             config_changed = True
+
+                             # Try pull
+                             print(f"    {GREY}Linking...{RESET}")
+                             subprocess.run(["git", "pull", "origin", "main"], cwd=path, capture_output=True)
+                             print(f"    {GREEN}Linked & Synced ✔{RESET}")
+                         except Exception as e:
+                             print(f"    {RED}Failed to link: {e}{RESET}")
+
         elif remote_url:
             # Missing + Remote = Clone (Recovery)
             try:
@@ -163,7 +185,27 @@ def sync_all_personas():
             except Exception as e:
                 print(f"{RED}Error: {e}{RESET}")
         else:
-             print(f"{RED}Cannot Sync (Missing & No Remote){RESET}")
+             # Missing & No Remote: Prompt to Recover?
+             print(f"{RED}Missing & No Remote.{RESET}")
+             ask_recover = input(f"    {CYAN}? Clone from a URL? (y/N): {RESET}").strip().lower()
+             if ask_recover == 'y':
+                 new_remote = input(f"    {CYAN}? Remote Git URL: {RESET}").strip()
+                 if new_remote:
+                     try:
+                        os.makedirs(os.path.dirname(path), exist_ok=True)
+                        res = subprocess.run(["git", "clone", new_remote, path], capture_output=True, text=True)
+
+                        if res.returncode == 0:
+                            print(f"    {GREEN}Recovered (Clone) ☁️ -> 💾{RESET}")
+                            p_data["remote_url"] = new_remote
+                            config_changed = True
+                        else:
+                            print(f"    {RED}Clone Failed. Check URL.{RESET}")
+                     except Exception as e:
+                        print(f"    {RED}Error: {e}{RESET}")
+
+    if config_changed:
+        save_config(config)
 
     print(f"\n{GREEN}Sync Complete.{RESET}")
     time.sleep(2)
@@ -352,7 +394,7 @@ def interactive_menu(prompt, options, default_index=0, return_char=False):
         print("-----------------------------------------------------")
         print(f"{GREY}Use UP/DOWN arrows to navigate, ENTER to select.{RESET}")
         if return_char:
-             print(f"{GREY}[C] Code | [P] Push Brain{RESET}")
+             print(f"{GREY}[C] Code | [S] Sync All | [P] Push Brain{RESET}")
 
         key = get_key()
 
@@ -366,7 +408,7 @@ def interactive_menu(prompt, options, default_index=0, return_char=False):
             return (current_row, None) if return_char else current_row
 
         # Handle Shortcuts
-        if return_char and key.lower() in ['c', 'p']:
+        if return_char and key.lower() in ['c', 'p', 's']:
             return (current_row, key.lower())
 
 def get_active_library_path():
@@ -2614,7 +2656,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.1.2"
+VERSION = "1.1.3"
 
 # ==========================================
 # MAINTAINER
