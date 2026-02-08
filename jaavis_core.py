@@ -125,15 +125,41 @@ def open_brain_vscode():
         print(f"{RED}VS Code ('code') not found in PATH.{RESET}")
 
 def sync_all_personas():
-    """Smart Sync: Pulls updates or Clones missing brains. Interactively fixes missing remotes."""
+    """Smart Sync: Pulls updates or Clones missing brains. Interactive & Robust."""
     config = load_config()
     personas = config.get("personas", {})
     if "programmer" not in personas: personas["programmer"] = {"path": DEFAULT_LIBRARY_PATH}
 
-    print(f"\n{MAGENTA}🔄 Smart Sync & Recovery Protocol...{RESET}")
+    # 1. Build Menu Options
+    persona_keys = ["programmer"] + sorted([k for k in personas.keys() if k != "programmer"])
+    menu_options = ["Sync All (Default)"]
+
+    for p in persona_keys:
+        p_data = personas.get(p, {})
+        path = p_data.get("path")
+        remote = p_data.get("remote_url", "No Remote")
+        short_remote = remote.replace("https://", "").replace("git@", "")[:25] + "..." if len(remote) > 25 else remote
+
+        last_sync, pending = get_git_status(path)
+        status_icon = "✅" if pending == 0 else "⚠️ Dirty"
+
+        menu_options.append(f"{p.capitalize()} [{short_remote}] {status_icon}")
+
+    # 2. Select Target
+    print(f"\n{MAGENTA}🔄 Jaavis Sync Protocol{RESET}")
+    choice_idx = interactive_menu("Select Target to Sync:", menu_options)
+
+    targets = []
+    if choice_idx == 0:
+        targets = persona_keys # All
+    else:
+        targets = [persona_keys[choice_idx - 1]] # Specific
+
+    print(f"\n{MAGENTA}⬇️  Syncing Selected Brains...{RESET}")
     config_changed = False
 
-    for name, p_data in personas.items():
+    for name in targets:
+        p_data = personas.get(name, {})
         path = p_data.get("path")
         remote_url = p_data.get("remote_url")
 
@@ -141,40 +167,52 @@ def sync_all_personas():
 
         if os.path.exists(path):
             if os.path.exists(os.path.join(path, ".git")):
-                # Exists + Git = Pull
-                try:
-                    res = subprocess.run(["git", "pull"], cwd=path, capture_output=True, text=True)
-                    if res.returncode == 0:
-                         print(f"{GREEN}Updated (Pull) ✔{RESET}")
-                    else:
-                         print(f"{YELLOW}Merge/Conflict? (Check manually){RESET}")
-                except Exception as e:
-                    print(f"{RED}Error: {e}{RESET}")
+                # Check for dirty state
+                _, pending = get_git_status(path)
+
+                # Logic: Stash -> Pull (Rebase) -> Pop
+                commands = []
+                if pending > 0:
+                    print(f"{YELLOW} Local changes ({pending}). Stashing...{RESET}", end="")
+                    commands.append(["git", "stash"])
+
+                commands.append(["git", "pull", "--rebase"])
+
+                if pending > 0:
+                    commands.append(["git", "stash", "pop"])
+
+                # Execute
+                success = True
+                for cmd in commands:
+                    res = subprocess.run(cmd, cwd=path, capture_output=True, text=True)
+                    if res.returncode != 0:
+                        print(f"\n    {RED}❌ Error during '{cmd[1]}':{RESET} {res.stderr.strip()}")
+                        success = False
+                        break
+
+                if success:
+                    print(f"{GREEN}Updated ✔{RESET}")
+
             else:
-                 # Exists but not Git-linked: Prompt to link?
+                 # Exists but not Git-linked
                  print(f"{YELLOW}Exists but not Git-linked.{RESET}")
-                 ask_link = input(f"    {CYAN}? Initialize and link to remote? (y/N): {RESET}").strip().lower()
-                 if ask_link == 'y':
+                 if input(f"    {CYAN}? Initialize and link to remote? (y/N): {RESET}").strip().lower() == 'y':
                      new_remote = input(f"    {CYAN}? Remote Git URL: {RESET}").strip()
                      if new_remote:
                          try:
                              subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
                              subprocess.run(["git", "branch", "-M", "main"], cwd=path, check=True, capture_output=True)
                              subprocess.run(["git", "remote", "add", "origin", new_remote], cwd=path, check=True, capture_output=True)
-
-                             # Save to config
                              p_data["remote_url"] = new_remote
                              config_changed = True
-
-                             # Try pull
                              print(f"    {GREY}Linking...{RESET}")
                              subprocess.run(["git", "pull", "origin", "main"], cwd=path, capture_output=True)
                              print(f"    {GREEN}Linked & Synced ✔{RESET}")
                          except Exception as e:
-                             print(f"    {RED}Failed to link: {e}{RESET}")
+                             print(f"    {RED}Failed: {e}{RESET}")
 
         elif remote_url:
-            # Missing + Remote = Clone (Recovery)
+            # Clone Recovery
             try:
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 res = subprocess.run(["git", "clone", remote_url, path], capture_output=True, text=True)
@@ -185,22 +223,20 @@ def sync_all_personas():
             except Exception as e:
                 print(f"{RED}Error: {e}{RESET}")
         else:
-             # Missing & No Remote: Prompt to Recover?
+             # Missing & No Remote
              print(f"{RED}Missing & No Remote.{RESET}")
-             ask_recover = input(f"    {CYAN}? Clone from a URL? (y/N): {RESET}").strip().lower()
-             if ask_recover == 'y':
+             if input(f"    {CYAN}? Clone from a URL? (y/N): {RESET}").strip().lower() == 'y':
                  new_remote = input(f"    {CYAN}? Remote Git URL: {RESET}").strip()
                  if new_remote:
                      try:
                         os.makedirs(os.path.dirname(path), exist_ok=True)
                         res = subprocess.run(["git", "clone", new_remote, path], capture_output=True, text=True)
-
                         if res.returncode == 0:
                             print(f"    {GREEN}Recovered (Clone) ☁️ -> 💾{RESET}")
                             p_data["remote_url"] = new_remote
                             config_changed = True
                         else:
-                            print(f"    {RED}Clone Failed. Check URL.{RESET}")
+                            print(f"    {RED}Clone Failed.{RESET}")
                      except Exception as e:
                         print(f"    {RED}Error: {e}{RESET}")
 
@@ -224,10 +260,13 @@ def push_all_personas():
     for p in persona_keys:
         p_data = personas.get(p, {})
         path = p_data.get("path")
+        remote = p_data.get("remote_url", "No Remote")
+        short_remote = remote.replace("https://", "").replace("git@", "")[:20] + "..." if len(remote) > 20 else remote
+
         last_sync, pending = get_git_status(path)
-        status = ""
-        if pending > 0: status = f"[{pending} pending]"
-        menu_options.append(f"{p.capitalize()} {status}")
+        status = f"[{pending} pending]" if pending > 0 else "Clean"
+
+        menu_options.append(f"{p.capitalize()} [{short_remote}] {status}")
 
     # 2. Select Target
     print(f"\n{MAGENTA}🚀 Jaavis Push Protocol{RESET}")
@@ -2725,7 +2764,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.1.4"
+VERSION = "1.1.5"
 
 # ==========================================
 # MAINTAINER
