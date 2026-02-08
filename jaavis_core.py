@@ -212,34 +212,103 @@ def sync_all_personas():
 
 
 def push_all_personas():
-    """Iterates through all personas and pushes changes"""
+    """Iterates through all personas and pushes changes. Interactive."""
     config = load_config()
     personas = config.get("personas", {})
     if "programmer" not in personas: personas["programmer"] = {"path": DEFAULT_LIBRARY_PATH}
 
-    print(f"\n{MAGENTA}🚀 Pushing All Brains to Cloud...{RESET}")
+    # 1. Build Menu Options
+    persona_keys = ["programmer"] + sorted([k for k in personas.keys() if k != "programmer"])
+    menu_options = ["Push All (Default)"]
 
-    for name, p_data in personas.items():
+    for p in persona_keys:
+        p_data = personas.get(p, {})
         path = p_data.get("path")
+        last_sync, pending = get_git_status(path)
+        status = ""
+        if pending > 0: status = f"[{pending} pending]"
+        menu_options.append(f"{p.capitalize()} {status}")
+
+    # 2. Select Target
+    print(f"\n{MAGENTA}🚀 Jaavis Push Protocol{RESET}")
+    choice_idx = interactive_menu("Select Target to Push:", menu_options)
+
+    targets = []
+    if choice_idx == 0:
+        targets = persona_keys # All
+    else:
+        targets = [persona_keys[choice_idx - 1]] # Specific
+
+    print(f"\n{MAGENTA}⬆️  Pushing Selected Brains...{RESET}")
+    config_changed = False
+
+    for name in targets:
+        p_data = personas.get(name, {})
+        path = p_data.get("path")
+
         if not path or not os.path.exists(path): continue
 
-        if os.path.exists(os.path.join(path, ".git")):
-            print(f"  {CYAN}• {name.capitalize()}:{RESET} ", end="", flush=True)
+        print(f"  {CYAN}• {name.capitalize()}:{RESET} ", end="", flush=True)
+
+        # Check for Git
+        if not os.path.exists(os.path.join(path, ".git")):
+             print(f"{YELLOW} Not a git repo.{RESET}")
+             if input(f"    {CYAN}? Initialize Git? (y/N): {RESET}").strip().lower() == 'y':
+                 try:
+                     subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
+                     subprocess.run(["git", "branch", "-M", "main"], cwd=path, check=True, capture_output=True)
+                     print(f"    {GREEN}Initialized.{RESET}")
+                 except:
+                     print(f"    {RED}Failed.{RESET}")
+                     continue
+             else:
+                 continue
+
+        # Check Remote
+        has_remote = False
+        try:
+            res = subprocess.run(["git", "remote"], cwd=path, capture_output=True, text=True)
+            if "origin" in res.stdout:
+                has_remote = True
+        except: pass
+
+        if not has_remote:
+            print(f"{YELLOW} No remote configured.{RESET}")
+            if input(f"    {CYAN}? Add Remote URL? (y/N): {RESET}").strip().lower() == 'y':
+                url = input(f"    {CYAN}? URL: {RESET}").strip()
+                if url:
+                    try:
+                        subprocess.run(["git", "remote", "add", "origin", url], cwd=path, check=True, capture_output=True)
+                        print(f"    {GREEN}Remote added.{RESET}")
+                        personas[name]["remote_url"] = url
+                        config_changed = True
+                        has_remote = True
+                    except:
+                        print(f"    {RED}Failed to add remote.{RESET}")
+
+        if has_remote:
             try:
                 # Add
                 subprocess.run(["git", "add", "."], cwd=path, check=True, capture_output=True)
                 # Commit (ignore empty)
                 subprocess.run(["git", "commit", "-m", f"Brain Sync: {datetime.now()}"], cwd=path, capture_output=True)
                 # Push
-                res = subprocess.run(["git", "push"], cwd=path, capture_output=True, text=True)
+                res = subprocess.run(["git", "push", "origin", "main"], cwd=path, capture_output=True, text=True)
+                if res.returncode != 0:
+                     # Try master fallback
+                     res = subprocess.run(["git", "push", "origin", "master"], cwd=path, capture_output=True, text=True)
+
                 if res.returncode == 0:
                     print(f"{GREEN}Synced ✔{RESET}")
                 else:
-                    print(f"{RED}Failed (Check remote){RESET}")
+                    print(f"{RED}Push Failed.{RESET}")
             except Exception as e:
                  print(f"{RED}Error: {e}{RESET}")
         else:
-             print(f"  {GREY}• {name.capitalize()}: Not linked (Skipping){RESET}")
+             print(f"{GREY} Skipped (No Remote){RESET}")
+
+    if config_changed:
+        save_config(config)
 
     print(f"\n{GREEN}Done.{RESET}")
     time.sleep(2)
@@ -2656,7 +2725,7 @@ def print_help():
     except ImportError:
         print("Rich not installed. Run 'pip install rich'")
 
-VERSION = "1.1.3"
+VERSION = "1.1.4"
 
 # ==========================================
 # MAINTAINER
